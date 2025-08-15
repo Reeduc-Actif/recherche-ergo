@@ -9,8 +9,25 @@ export const dynamic = 'force-dynamic'
 const Payload = z.object({
     lat: z.number().optional(),
     lng: z.number().optional(),
-    radius_km: z.number().optional(), // pour plus tard si tu ajoutes un filtre distance
+    radius_km: z.number().optional(),
 })
+
+type LocationRow = {
+    id: number
+    address: string | null
+    city: string | null
+    postal_code: string | null
+    modes: string[] | null
+}
+
+type TherapistWithLocations = {
+    id: string
+    slug: string
+    full_name: string
+    headline: string | null
+    booking_url: string | null
+    therapist_locations: LocationRow[] | null
+}
 
 type Result = {
     therapist_id: string
@@ -34,16 +51,12 @@ export async function POST(req: Request) {
     // 1) Parse/valide l'input (même si on ne l'exploite pas encore pour filtrer)
     const json = await req.json().catch(() => ({}))
     const _input = Payload.safeParse(json)
-    if (!_input.success) {
-        // On ne bloque pas : on continue avec des valeurs par défaut (fallback)
-        // Si tu préfères, renvoie un 400 ici.
-    }
+    // (optionnel) si tu veux bloquer sur payload invalide, renvoie 400 ici
 
-    // 2) Supabase server (RLS côté serveur)
+    // 2) Supabase (côté serveur)
     const supabase = await supabaseServer()
 
     // 3) Récupère les thérapeutes + emplacements
-    // NOTE: adapte les noms exacts de relations si différents dans ton schéma.
     const { data, error } = await supabase
         .from('therapists')
         .select(
@@ -71,23 +84,25 @@ export async function POST(req: Request) {
         )
     }
 
-    // 4) Aplatis en tableau de résultats
-    const results: Result[] =
-        (data ?? []).flatMap((t) =>
-            (t as any).therapist_locations?.map((l: any) => ({
-                therapist_id: t.id as string,
-                slug: t.slug as string,
-                full_name: t.full_name as string,
-                headline: (t.headline as string) ?? null,
-                booking_url: (t.booking_url as string) ?? null,
-                location_id: l.id as number,
-                address: (l.address as string) ?? null,
-                city: (l.city as string) ?? null,
-                postal_code: (l.postal_code as string) ?? null,
-                modes: (l.modes as string[]) ?? null,
-                distance_m: null, // 👉 tu peux calculer la distance plus tard côté RPC
-            })) ?? [],
-        ) ?? []
+    // 4) Typage fort de la réponse (sans any)
+    const rows = (data ?? []) as unknown as TherapistWithLocations[]
+
+    // 5) Aplatir en tableau de résultats
+    const results: Result[] = rows.flatMap((t) =>
+        (t.therapist_locations ?? []).map((l) => ({
+            therapist_id: t.id,
+            slug: t.slug,
+            full_name: t.full_name,
+            headline: t.headline ?? null,
+            booking_url: t.booking_url ?? null,
+            location_id: l.id,
+            address: l.address ?? null,
+            city: l.city ?? null,
+            postal_code: l.postal_code ?? null,
+            modes: l.modes ?? null,
+            distance_m: null, // 👉 à calculer plus tard via RPC géo
+        })),
+    )
 
     return NextResponse.json({ ok: true, results })
 }
