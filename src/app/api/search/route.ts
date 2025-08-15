@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
+export const runtime = 'nodejs'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,9 +71,9 @@ export async function POST(req: Request) {
     })
 
     if (error) {
-        console.error('[RPC search_therapists]', error) // ← indispensable pour voir la vraie cause
+        console.error('[RPC search_therapists]', error) // indispensable
         return NextResponse.json(
-            { ok: false, error: error.message, results: [] as Result[] },
+            { ok: false, error: error.message, results: [] },
             { status: 500 },
         )
     }
