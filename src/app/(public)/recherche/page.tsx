@@ -5,6 +5,8 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+const INITIAL_CENTER: [number, number] = [4.3517, 50.8503] // Bruxelles
+
 type Result = {
     therapist_id: string
     slug: string
@@ -60,20 +62,17 @@ export default function SearchPage() {
         mapRef.current = m
 
         m.addControl(new mapboxgl.NavigationControl(), 'top-right')
-        m.addControl(
-            new mapboxgl.GeolocateControl({
-                positionOptions: { enableHighAccuracy: true },
-                trackUserLocation: false,
-            }),
-            'top-right',
-        )
+        m.addControl(new mapboxgl.GeolocateControl({
+            positionOptions: { enableHighAccuracy: true },
+            trackUserLocation: false
+        }), 'top-right')
 
         m.on('load', async () => {
             await fetchResults(INITIAL_CENTER[1], INITIAL_CENTER[0])
         })
 
         return () => m.remove()
-    }, [])
+    }, []) // ✅ plus de warning
 
     // Marqueurs (sans aucun "any")
     useEffect(() => {

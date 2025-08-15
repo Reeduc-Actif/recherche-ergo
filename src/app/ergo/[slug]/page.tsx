@@ -2,23 +2,25 @@
 import { supabaseServer } from '@/lib/supabase'
 import Link from 'next/link'
 
-export default async function ErgoPage({ params }: { params: { slug: string } }) {
+type Params = { slug: string }
+
+export default async function ErgoPage({ params }: { params: Promise<Params> }) {
+    const { slug } = await params
+
     const supabase = await supabaseServer()
     const { data: t } = await supabase
         .from('therapists')
         .select('id, full_name, headline, bio, booking_url, website, email, phone')
-        .eq('slug', params.slug)
+        .eq('slug', slug)
         .maybeSingle()
 
-    if (!t)
-        return <div className="text-sm text-neutral-600">Profil introuvable.</div>
+    if (!t) return <div className="text-sm text-neutral-600">Profil introuvable.</div>
 
     const { data: locs } = await supabase
         .from('therapist_locations')
         .select('address, city, postal_code, modes')
         .eq('therapist_id', t.id)
 
-    // On UTILISE réellement les spécialités pour éviter le warning "unused"
     const { data: specs } = await supabase
         .from('therapist_specialties')
         .select('specialty_slug, specialties(label)')
@@ -35,10 +37,7 @@ export default async function ErgoPage({ params }: { params: { slug: string } })
                     <h2 className="mb-1 text-lg font-medium">Spécialités</h2>
                     <div className="flex flex-wrap gap-2">
                         {specs.map((s, i) => (
-                            <span
-                                key={`${s.specialty_slug}-${i}`}
-                                className="rounded-full border px-2 py-0.5 text-sm"
-                            >
+                            <span key={`${s.specialty_slug}-${i}`} className="rounded-full border px-2 py-0.5 text-sm">
                                 {s.specialties?.[0]?.label ?? s.specialty_slug}
                             </span>
                         ))}
@@ -57,28 +56,16 @@ export default async function ErgoPage({ params }: { params: { slug: string } })
 
             <div className="flex gap-3">
                 {t.booking_url && (
-                    <a
-                        className="rounded-lg border px-3 py-1"
-                        href={t.booking_url}
-                        target="_blank"
-                        rel="noreferrer"
-                    >
+                    <a className="rounded-lg border px-3 py-1" href={t.booking_url} target="_blank" rel="noreferrer">
                         Prendre RDV
                     </a>
                 )}
                 {t.website && (
-                    <a
-                        className="rounded-lg border px-3 py-1"
-                        href={t.website}
-                        target="_blank"
-                        rel="noreferrer"
-                    >
+                    <a className="rounded-lg border px-3 py-1" href={t.website} target="_blank" rel="noreferrer">
                         Site web
                     </a>
                 )}
-                <Link className="rounded-lg border px-3 py-1" href="/recherche">
-                    ← Retour
-                </Link>
+                <Link className="rounded-lg border px-3 py-1" href="/recherche">← Retour</Link>
             </div>
         </main>
     )
