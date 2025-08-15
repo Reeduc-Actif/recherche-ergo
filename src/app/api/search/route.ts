@@ -5,28 +5,30 @@ import { supabaseServer } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
-// Payload reçu depuis le client
+// Validation du payload
 const Payload = z.object({
     lat: z.number().optional(),
     lng: z.number().optional(),
     radius_km: z.number().optional(),
+    specialties_filter: z.array(z.string()).optional(),
+    modes_filter: z.array(z.string()).optional(),
 })
 
-type LocationRow = {
-    id: number
-    address: string | null
-    city: string | null
-    postal_code: string | null
-    modes: string[] | null
-}
-
-type TherapistWithLocations = {
-    id: string
+// Typage du retour de la RPC
+type RpcRow = {
+    therapist_id: string
     slug: string
     full_name: string
     headline: string | null
     booking_url: string | null
-    therapist_locations: LocationRow[] | null
+    location_id: number
+    address: string | null
+    city: string | null
+    postal_code: string | null
+    modes: string[] | null
+    distance_m: number | null
+    lon: number | null
+    lat_out: number | null
 }
 
 type Result = {
@@ -41,41 +43,32 @@ type Result = {
     postal_code: string | null
     modes: string[] | null
     distance_m: number | null
+    lon: number | null
+    lat: number | null
 }
 
-/**
- * POST /api/search
- * Retourne une liste à plat de thérapeutes + adresses (distance_m = null tant que pas de géo).
- */
 export async function POST(req: Request) {
-    // 1) Parse/valide l'input (même si on ne l'exploite pas encore pour filtrer)
-    const json = await req.json().catch(() => ({}))
-    const _input = Payload.safeParse(json)
-    // (optionnel) si tu veux bloquer sur payload invalide, renvoie 400 ici
+    const body = await req.json().catch(() => ({}))
+    const parsed = Payload.safeParse(body)
 
-    // 2) Supabase (côté serveur)
+    if (!parsed.success) {
+        return NextResponse.json(
+            { ok: false, error: 'Invalid payload', results: [] as Result[] },
+            { status: 400 },
+        )
+    }
+
+    const { lat, lng, radius_km, specialties_filter, modes_filter } = parsed.data
+
     const supabase = await supabaseServer()
 
-    // 3) Récupère les thérapeutes + emplacements
-    const { data, error } = await supabase
-        .from('therapists')
-        .select(
-            `
-      id,
-      slug,
-      full_name,
-      headline,
-      booking_url,
-      therapist_locations:therapist_locations (
-        id,
-        address,
-        city,
-        postal_code,
-        modes
-      )
-    `,
-        )
-        .limit(100)
+    const { data: rpcData, error } = await supabase.rpc('search_therapists', {
+        lat,
+        lng,
+        radius_km,
+        specialties_filter,
+        modes_filter,
+    })
 
     if (error) {
         return NextResponse.json(
@@ -84,30 +77,28 @@ export async function POST(req: Request) {
         )
     }
 
-    // 4) Typage fort de la réponse (sans any)
-    const rows = (data ?? []) as unknown as TherapistWithLocations[]
+    const rows = (rpcData ?? []) as RpcRow[]
 
-    // 5) Aplatir en tableau de résultats
-    const results: Result[] = rows.flatMap((t) =>
-        (t.therapist_locations ?? []).map((l) => ({
-            therapist_id: t.id,
-            slug: t.slug,
-            full_name: t.full_name,
-            headline: t.headline ?? null,
-            booking_url: t.booking_url ?? null,
-            location_id: l.id,
-            address: l.address ?? null,
-            city: l.city ?? null,
-            postal_code: l.postal_code ?? null,
-            modes: l.modes ?? null,
-            distance_m: null, // 👉 à calculer plus tard via RPC géo
-        })),
-    )
+    const results: Result[] = rows.map((r) => ({
+        therapist_id: r.therapist_id,
+        slug: r.slug,
+        full_name: r.full_name,
+        headline: r.headline,
+        booking_url: r.booking_url,
+        location_id: r.location_id,
+        address: r.address,
+        city: r.city,
+        postal_code: r.postal_code,
+        modes: r.modes,
+        distance_m: r.distance_m,
+        lon: r.lon,
+        lat: r.lat_out,
+    }))
 
     return NextResponse.json({ ok: true, results })
 }
 
-// Optionnel : éviter 405 si quelqu’un ping en GET
+// Pour éviter un 405 en GET
 export async function GET() {
     return NextResponse.json(
         { ok: false, error: 'Use POST /api/search' },

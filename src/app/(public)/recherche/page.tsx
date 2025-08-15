@@ -20,9 +20,8 @@ type Result = {
     postal_code: string | null
     modes: string[] | null
     distance_m: number | null
-    // Si plus tard tu ajoutes lon/lat dans la RPC, dé-commente :
-    // lon?: number | null
-    // lat?: number | null
+    lon?: number | null
+    lat?: number | null
 }
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
@@ -85,26 +84,33 @@ export default function SearchPage() {
         const m = mapRef.current
         if (!m) return
 
-        // Clear anciens marqueurs
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
 
-        // Dé-commente quand la RPC renvoie lon/lat :
-        // results.forEach((r) => {
-        //   if (r.lon != null && r.lat != null) {
-        //     const mk = new mapboxgl.Marker()
-        //       .setLngLat([r.lon, r.lat])
-        //       .setPopup(
-        //         new mapboxgl.Popup().setHTML(
-        //           `<strong>${r.full_name}</strong><br/>${[r.address, r.postal_code, r.city]
-        //             .filter(Boolean)
-        //             .join(', ')}`,
-        //         ),
-        //       )
-        //       .addTo(m)
-        //     markersRef.current.push(mk)
-        //   }
-        // })
+        const bounds = new mapboxgl.LngLatBounds()
+        let count = 0
+
+        results.forEach((r) => {
+            if (r.lon != null && r.lat != null) {
+                const mk = new mapboxgl.Marker()
+                    .setLngLat([r.lon, r.lat])
+                    .setPopup(
+                        new mapboxgl.Popup().setHTML(
+                            `<strong>${r.full_name}</strong><br/>${[r.address, r.postal_code, r.city]
+                                .filter(Boolean)
+                                .join(', ')}`,
+                        ),
+                    )
+                    .addTo(m)
+                markersRef.current.push(mk)
+                bounds.extend([r.lon, r.lat])
+                count++
+            }
+        })
+
+        if (count > 0) {
+            m.fitBounds(bounds, { padding: 40, maxZoom: 12, duration: 0 })
+        }
     }, [results])
 
     // Liste affichée à gauche
