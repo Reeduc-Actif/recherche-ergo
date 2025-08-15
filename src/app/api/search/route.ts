@@ -5,13 +5,13 @@ import { supabaseServer } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
-// Validation du payload
+// Validation du payload (défauts sûrs)
 const Payload = z.object({
-    lat: z.number().optional(),
-    lng: z.number().optional(),
-    radius_km: z.number().optional(),
-    specialties_filter: z.array(z.string()).optional(),
-    modes_filter: z.array(z.string()).optional(),
+    lat: z.number().finite().optional(),
+    lng: z.number().finite().optional(),
+    radius_km: z.number().int().min(1).max(200).default(25),
+    specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
+    modes_filter: z.array(z.string().min(1)).nonempty().optional(),
 })
 
 // Typage du retour de la RPC
@@ -59,15 +59,14 @@ export async function POST(req: Request) {
     }
 
     const { lat, lng, radius_km, specialties_filter, modes_filter } = parsed.data
-
     const supabase = await supabaseServer()
 
     const { data: rpcData, error } = await supabase.rpc('search_therapists', {
-        lat,
-        lng,
+        lat: lat ?? null,
+        lng: lng ?? null,
         radius_km,
-        specialties_filter,
-        modes_filter,
+        specialties_filter: specialties_filter ?? null,
+        modes_filter: modes_filter ?? null,
     })
 
     if (error) {

@@ -5,8 +5,9 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-/** Centre par défaut : Bruxelles */
+/** Centre par défaut : Bruxelles [lng, lat] */
 const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
+const DEFAULT_RADIUS_KM = 25
 
 type Result = {
     therapist_id: string
@@ -40,10 +41,15 @@ export default function SearchPage() {
             const res = await fetch('/api/search', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ lat, lng, radius_km: 25 }),
+                body: JSON.stringify({
+                    lat,
+                    lng,
+                    radius_km: DEFAULT_RADIUS_KM,
+                    // Tu pourras brancher specialties_filter / modes_filter ici si besoin
+                }),
             })
-            const json = (await res.json()) as { results?: Result[] }
-            setResults(json.results ?? [])
+            const json = (await res.json()) as { ok?: boolean; results?: Result[] }
+            setResults((json.ok && json.results) ? json.results : [])
         } catch {
             setResults([])
         } finally {
@@ -73,17 +79,19 @@ export default function SearchPage() {
         )
 
         m.on('load', async () => {
+            // première recherche centrée sur Bruxelles
             await fetchResults(INITIAL_CENTER[1], INITIAL_CENTER[0])
         })
 
         return () => m.remove()
     }, [])
 
-    // Marqueurs (sans "any")
+    // Marqueurs + popups + fitBounds
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
 
+        // Nettoyer l'existant
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
 
@@ -92,24 +100,38 @@ export default function SearchPage() {
 
         results.forEach((r) => {
             if (r.lon != null && r.lat != null) {
+                const lngLat: [number, number] = [r.lon, r.lat]
+                const popupHtml = `
+          <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(r.full_name)}</div>
+          <div style="font-size:12px;color:#555;margin-bottom:6px;">
+            ${escapeHtml([r.address, r.postal_code, r.city].filter(Boolean).join(', '))}
+          </div>
+          <div style="display:flex;gap:6px;">
+            ${r.booking_url ? `<a href="${escapeAttr(r.booking_url)}" target="_blank" rel="noreferrer" style="font-size:12px;text-decoration:underline;">Prendre RDV</a>` : ''}
+            <a href="/ergo/${escapeAttr(r.slug)}" style="font-size:12px;text-decoration:underline;">Voir le profil</a>
+          </div>
+        `
+
                 const mk = new mapboxgl.Marker()
-                    .setLngLat([r.lon, r.lat])
-                    .setPopup(
-                        new mapboxgl.Popup().setHTML(
-                            `<strong>${r.full_name}</strong><br/>${[r.address, r.postal_code, r.city]
-                                .filter(Boolean)
-                                .join(', ')}`,
-                        ),
-                    )
+                    .setLngLat(lngLat)
+                    .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
                     .addTo(m)
+
                 markersRef.current.push(mk)
-                bounds.extend([r.lon, r.lat])
+                bounds.extend(lngLat)
                 count++
             }
         })
 
-        if (count > 0) {
-            m.fitBounds(bounds, { padding: 40, maxZoom: 12, duration: 0 })
+        // Ajustement de la vue
+        if (count >= 2) {
+            m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
+        } else if (count === 1) {
+            const c = bounds.getCenter()
+            m.easeTo({ center: c, zoom: 12, duration: 600 })
+        } else {
+            // Aucun résultat → retour au centre par défaut
+            m.easeTo({ center: INITIAL_CENTER, zoom: 11, duration: 600 })
         }
     }, [results])
 
@@ -135,13 +157,23 @@ export default function SearchPage() {
                 <div className="text-sm text-neutral-600">
                     {loading ? 'Chargement…' : `${items.length} résultat(s)`}
                 </div>
+
+                {(!loading && items.length === 0) && (
+                    <div className="rounded-lg border bg-neutral-50 p-4 text-sm text-neutral-700">
+                        Aucun ergothérapeute trouvé dans ce rayon. Essayez d’élargir la zone
+                        ou de déplacer la carte.
+                    </div>
+                )}
+
                 <ul className="divide-y rounded-xl border">
                     {items.map((it) => (
                         <li key={it.key} className="p-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <div className="font-medium">{it.title}</div>
-                                    <div className="text-sm text-neutral-600">{it.subtitle}</div>
+                                    {it.subtitle && (
+                                        <div className="text-sm text-neutral-600">{it.subtitle}</div>
+                                    )}
                                     <div className="text-sm text-neutral-600">{it.address}</div>
                                     {it.km && (
                                         <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>
@@ -176,4 +208,19 @@ export default function SearchPage() {
             </section>
         </main>
     )
+}
+
+/** Utilitaires : échappement simple pour le HTML/attr des popups */
+function escapeHtml(input: string) {
+    return input
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+}
+
+function escapeAttr(input: string) {
+    // Pour l’instant on réutilise le même échappement
+    return escapeHtml(input)
 }
