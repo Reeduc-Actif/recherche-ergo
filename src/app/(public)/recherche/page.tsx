@@ -27,6 +27,15 @@ type Result = {
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
+// Désactive la télémétrie Mapbox (évite les appels vers events.mapbox.com)
+try {
+    // @ts-expect-error: setTelemetryEnabled n'est pas typé dans toutes les versions
+    if (typeof mapboxgl.setTelemetryEnabled === 'function') {
+        // @ts-ignore
+        mapboxgl.setTelemetryEnabled(false)
+    }
+} catch { }
+
 export default function SearchPage() {
     const mapRef = useRef<mapboxgl.Map | null>(null)
     const mapDiv = useRef<HTMLDivElement | null>(null)
