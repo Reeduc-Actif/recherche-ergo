@@ -5,7 +5,8 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const INITIAL_CENTER: [number, number] = [4.3517, 50.8503] // Bruxelles
+/** Centre par défaut : Bruxelles */
+const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
 
 type Result = {
     therapist_id: string
@@ -19,7 +20,7 @@ type Result = {
     postal_code: string | null
     modes: string[] | null
     distance_m: number | null
-    // Si plus tard tu ajoutes lon/lat dans la RPC, dé-commente:
+    // Si plus tard tu ajoutes lon/lat dans la RPC, dé-commente :
     // lon?: number | null
     // lat?: number | null
 }
@@ -33,20 +34,22 @@ export default function SearchPage() {
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
-    // Centre fixe (évite warning de dépendance + setCenter inutilisé)
-    const INITIAL_CENTER: [number, number] = [4.3517, 50.8503] // Bruxelles
-
     // Fetch résultats
     const fetchResults = async (lat?: number, lng?: number) => {
-        setLoading(true)
-        const res = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ lat, lng, radius_km: 25 }),
-        })
-        const json = await res.json()
-        setResults(json.results ?? [])
-        setLoading(false)
+        try {
+            setLoading(true)
+            const res = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ lat, lng, radius_km: 25 }),
+            })
+            const json = (await res.json()) as { results?: Result[] }
+            setResults(json.results ?? [])
+        } catch {
+            setResults([])
+        } finally {
+            setLoading(false)
+        }
     }
 
     // Init carte
@@ -62,19 +65,22 @@ export default function SearchPage() {
         mapRef.current = m
 
         m.addControl(new mapboxgl.NavigationControl(), 'top-right')
-        m.addControl(new mapboxgl.GeolocateControl({
-            positionOptions: { enableHighAccuracy: true },
-            trackUserLocation: false
-        }), 'top-right')
+        m.addControl(
+            new mapboxgl.GeolocateControl({
+                positionOptions: { enableHighAccuracy: true },
+                trackUserLocation: false,
+            }),
+            'top-right',
+        )
 
         m.on('load', async () => {
             await fetchResults(INITIAL_CENTER[1], INITIAL_CENTER[0])
         })
 
         return () => m.remove()
-    }, []) // ✅ plus de warning
+    }, [])
 
-    // Marqueurs (sans aucun "any")
+    // Marqueurs (sans "any")
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
@@ -83,7 +89,7 @@ export default function SearchPage() {
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
 
-        // Si tu exposes lon/lat dans la RPC, dé-commente ci-dessous :
+        // Dé-commente quand la RPC renvoie lon/lat :
         // results.forEach((r) => {
         //   if (r.lon != null && r.lat != null) {
         //     const mk = new mapboxgl.Marker()
