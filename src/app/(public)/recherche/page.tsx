@@ -27,7 +27,6 @@ type Result = {
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
-// Désactive proprement la télémétrie Mapbox sans @ts-ignore
 type MapboxWithTelemetry = typeof mapboxgl & {
     setTelemetryEnabled?: (enabled: boolean) => void
 }
@@ -35,6 +34,7 @@ const mb: MapboxWithTelemetry = mapboxgl
 if (typeof mb.setTelemetryEnabled === 'function') {
     mb.setTelemetryEnabled(false)
 }
+
 
 export default function SearchPage() {
     const mapRef = useRef<mapboxgl.Map | null>(null)

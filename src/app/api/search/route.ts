@@ -70,7 +70,7 @@ export async function POST(req: Request) {
     })
 
     if (error) {
-        console.error('[RPC search_therapists] ', error) // <-- ajoute ça
+        console.error('[RPC search_therapists]', error) // ← indispensable pour voir la vraie cause
         return NextResponse.json(
             { ok: false, error: error.message, results: [] as Result[] },
             { status: 500 },
