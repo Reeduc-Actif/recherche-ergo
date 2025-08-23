@@ -3,7 +3,6 @@ export const dynamic = 'force-dynamic'
 
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import type React from 'react'
 import {
     Suspense,
     useCallback,
@@ -20,6 +19,20 @@ const DEFAULT_RADIUS_KM = 25
 const MIN_R = 5
 const MAX_R = 50
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+
+// Catalogues (⚠️ assure-toi que les slugs existent côté DB)
+const SPECIALTIES = [
+    { slug: 'neuro', label: 'Neuro' },
+    { slug: 'pediatrie', label: 'Pédiatrie' },
+    { slug: 'geriatrie', label: 'Gériatrie' },
+    { slug: 'main', label: 'Main' },
+    { slug: 'douleur', label: 'Douleur' },
+]
+const MODES = [
+    { value: 'cabinet', label: 'Au cabinet' },
+    { value: 'domicile', label: 'À domicile' },
+    { value: 'visio', label: 'En visio' },
+]
 
 type Result = {
     therapist_id: string
@@ -53,14 +66,16 @@ function SearchPageInner() {
     const mapRef = useRef<mapboxgl.Map | null>(null)
     const mapDiv = useRef<HTMLDivElement | null>(null)
     const markersRef = useRef<mapboxgl.Marker[]>([])
-    const userMarkerRef = useRef<mapboxgl.Marker | null>(null)
-
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
-    // état "zone sale" → bouton "Chercher dans cette zone"
-    const [isDirty, setIsDirty] = useState(false)
-    const suppressDirtyRef = useRef(false) // ne pas afficher le bouton lors des moves programmatiques
+    // debouncing + anti-boucle (fitBounds/easeTo → moveend)
+    const moveTimerRef = useRef<number | null>(null)
+    const ignoreNextMoveRef = useRef(false)
+    const userMovedRef = useRef(false)
+
+    // pin utilisateur/domicile
+    const userMarkerRef = useRef<mapboxgl.Marker | null>(null)
 
     // --- URL state
     const searchParams = useSearchParams()
@@ -71,7 +86,17 @@ function SearchPageInner() {
     const urlLng = Number(searchParams.get('lng'))
     const urlR = Number(searchParams.get('r'))
 
-    // Centre initial en ref (pour éviter de ré-initialiser la carte)
+    // Filtres depuis l’URL
+    const urlSpecs = (searchParams.get('spec') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    const urlModes = (searchParams.get('modes') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+    // Centre initial en ref (pas de rerun de l’effet d’init)
     const initialCenterRef = useRef<[number, number]>(
         Number.isFinite(urlLat) && Number.isFinite(urlLng) ? [urlLng, urlLat] : INITIAL_CENTER,
     )
@@ -80,29 +105,30 @@ function SearchPageInner() {
         Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
     )
     const radiusRef = useRef(radiusKm)
-    useEffect(() => {
-        radiusRef.current = radiusKm
-    }, [radiusKm])
+    useEffect(() => { radiusRef.current = radiusKm }, [radiusKm])
 
-    // Filtres
-    const [modesFilter, setModesFilter] = useState<string[]>([])
-    const [specFilter, setSpecFilter] = useState<string[]>([])
+    const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
+    const [selectedModes, setSelectedModes] = useState<string[]>(urlModes)
 
-    // Helpers URL (stable)
+    // Helpers URL
     const updateUrl = useCallback(
-        (lat: number, lng: number, r: number) => {
+        (lat: number, lng: number, r: number, specs = selectedSpecs, modes = selectedModes) => {
             const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
             sp.set('lat', lat.toFixed(6))
             sp.set('lng', lng.toFixed(6))
             sp.set('r', String(r))
+            if (specs.length) sp.set('spec', specs.join(','))
+            else sp.delete('spec')
+            if (modes.length) sp.set('modes', modes.join(','))
+            else sp.delete('modes')
             router.replace(`${pathname}?${sp.toString()}`)
         },
-        [pathname, router],
+        [pathname, router, selectedModes, selectedSpecs],
     )
 
-    // Fetch résultats (stable)
+    // Fetch résultats
     const fetchResults = useCallback(
-        async (lat?: number, lng?: number, r: number = radiusRef.current) => {
+        async (lat?: number, lng?: number, r: number = radiusRef.current, specs = selectedSpecs, modes = selectedModes) => {
             try {
                 setLoading(true)
                 const res = await fetch('/api/search', {
@@ -112,8 +138,8 @@ function SearchPageInner() {
                         lat,
                         lng,
                         radius_km: r,
-                        specialties_filter: specFilter.length ? specFilter : undefined,
-                        modes_filter: modesFilter.length ? modesFilter : undefined,
+                        specialties_filter: specs.length ? specs : undefined,
+                        modes_filter: modes.length ? modes : undefined,
                     }),
                 })
                 const json = (await res.json()) as { ok?: boolean; results?: Result[] }
@@ -124,32 +150,62 @@ function SearchPageInner() {
                 setLoading(false)
             }
         },
-        [modesFilter, specFilter],
+        [selectedModes, selectedSpecs],
     )
 
-    // Utilitaire: placer/mettre à jour le pin utilisateur (domicile / position)
+    // Pin utilisateur (DOM rouge + halo)
     const placeUserMarker = useCallback((lat: number, lng: number) => {
         const m = mapRef.current
         if (!m) return
         if (userMarkerRef.current) userMarkerRef.current.remove()
 
-        // Élément DOM rouge bien visible
         const el = document.createElement('div')
         el.style.width = '18px'
         el.style.height = '18px'
         el.style.borderRadius = '50%'
-        el.style.background = '#e11d48' // rose/rouge
-        el.style.boxShadow = '0 0 0 3px #fff, 0 0 0 6px rgba(225,29,72,.35)' // halo
+        el.style.background = '#e11d48'
+        el.style.boxShadow = '0 0 0 3px #fff, 0 0 0 6px rgba(225,29,72,.35)'
         el.style.border = '2px solid #fff'
 
         userMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: 'center' })
             .setLngLat([lng, lat])
             .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Votre position'))
             .addTo(m)
-
-        // (Facultatif) ouvrir la popup automatiquement :
-        // userMarkerRef.current.togglePopup()
     }, [])
+
+    const useMyLocation = useCallback(() => {
+        if (!navigator.geolocation) return
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const { latitude, longitude } = pos.coords
+                const m = mapRef.current
+                if (!m) return
+                try {
+                    localStorage.setItem('homeLat', String(latitude))
+                    localStorage.setItem('homeLng', String(longitude))
+                } catch { }
+                placeUserMarker(latitude, longitude)
+                userMovedRef.current = false
+                ignoreNextMoveRef.current = true
+                m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
+                fetchResults(latitude, longitude, radiusRef.current)
+                updateUrl(latitude, longitude, radiusRef.current)
+            },
+            () => { },
+            { enableHighAccuracy: true, timeout: 8000 },
+        )
+    }, [fetchResults, placeUserMarker, updateUrl])
+
+    const setHomeHere = useCallback(() => {
+        const m = mapRef.current
+        if (!m) return
+        const c = m.getCenter()
+        try {
+            localStorage.setItem('homeLat', String(c.lat))
+            localStorage.setItem('homeLng', String(c.lng))
+        } catch { }
+        placeUserMarker(c.lat, c.lng)
+    }, [placeUserMarker])
 
     // Init carte — une seule fois
     useEffect(() => {
@@ -177,90 +233,90 @@ function SearchPageInner() {
             'top-right',
         )
 
-        // Marquer la carte "sale" uniquement quand l’utilisateur bouge
-        const markDirty = () => {
-            if (suppressDirtyRef.current) {
-                suppressDirtyRef.current = false
-                return
-            }
-            setIsDirty(true)
-        }
-        m.on('dragend', markDirty)
-        m.on('zoomend', markDirty)
+        // marquer le premier geste utilisateur
+        m.on('dragstart', () => { userMovedRef.current = true })
+        m.on('zoomstart', () => { userMovedRef.current = true })
 
-        // Erreurs Mapbox
-        m.on('error', (ev: mapboxgl.ErrorEvent) => {
-            console.error('[Mapbox error]', ev?.error || ev)
+        m.on('error', (ev: unknown) => {
+            const err = (ev as { error?: unknown })?.error ?? ev
+            console.error('[Mapbox error]', err)
         })
 
-        // Au chargement: 1er fetch + pin domicile si dispo
+        // Charger un domicile (URL ou localStorage)
+        const maybePlaceHome = () => {
+            const homeLatStr = searchParams.get('home_lat') ?? (typeof window !== 'undefined' ? localStorage.getItem('homeLat') : null)
+            const homeLngStr = searchParams.get('home_lng') ?? (typeof window !== 'undefined' ? localStorage.getItem('homeLng') : null)
+            const hLat = homeLatStr ? Number(homeLatStr) : NaN
+            const hLng = homeLngStr ? Number(homeLngStr) : NaN
+            if (Number.isFinite(hLat) && Number.isFinite(hLng)) {
+                placeUserMarker(hLat, hLng)
+            }
+        }
+
         const onLoad = async () => {
             m.resize()
-            // Domicile via URL ?home_lat&home_lng ou via localStorage 'homeLat'/'homeLng'
-            let homeLat = Number(searchParams.get('home_lat'))
-            let homeLng = Number(searchParams.get('home_lng'))
-            if (!Number.isFinite(homeLat) || !Number.isFinite(homeLng)) {
-                try {
-                    const lsLat = Number(localStorage.getItem('homeLat') || '')
-                    const lsLng = Number(localStorage.getItem('homeLng') || '')
-                    if (Number.isFinite(lsLat) && Number.isFinite(lsLng)) {
-                        homeLat = lsLat
-                        homeLng = lsLng
-                    }
-                } catch {
-                    // ignore
-                }
-            }
-            if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) {
-                placeUserMarker(homeLat as number, homeLng as number)
-            }
-
+            maybePlaceHome()
             const c = m.getCenter()
             await fetchResults(c.lat, c.lng, radiusRef.current)
             updateUrl(c.lat, c.lng, radiusRef.current)
-            setIsDirty(false)
+        }
+
+        const onMoveEnd = () => {
+            if (ignoreNextMoveRef.current) {
+                ignoreNextMoveRef.current = false
+                return
+            }
+            // debounce 300ms
+            if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
+            moveTimerRef.current = window.setTimeout(() => {
+                const c = m.getCenter()
+                fetchResults(c.lat, c.lng, radiusRef.current)
+                updateUrl(c.lat, c.lng, radiusRef.current)
+            }, 300)
         }
 
         m.on('load', onLoad)
+        m.on('moveend', onMoveEnd)
 
         return () => {
-            m.off('dragend', markDirty)
-            m.off('zoomend', markDirty)
             m.off('load', onLoad)
+            m.off('moveend', onMoveEnd)
+            if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
             m.remove()
             mapRef.current = null
-            userMarkerRef.current = null
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchResults, placeUserMarker, updateUrl]) // callbacks stables
+    }, []) // pas de re-création → la carte ne "disparaît" plus
 
-    // Si le rayon change → on ne bouge pas la carte, on refetch directement
+    // Rayon changé → relance
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
+        userMovedRef.current = false
         const c = m.getCenter()
         fetchResults(c.lat, c.lng, radiusKm)
         updateUrl(c.lat, c.lng, radiusKm)
-        setIsDirty(false)
     }, [radiusKm, fetchResults, updateUrl])
 
-    // Si les filtres changent → refetch immédiat au centre courant
+    // Filtres changés → relance (et maj URL)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
         const c = m.getCenter()
-        fetchResults(c.lat, c.lng, radiusRef.current)
-        updateUrl(c.lat, c.lng, radiusRef.current)
-        setIsDirty(false)
-    }, [modesFilter, specFilter, fetchResults, updateUrl])
+        fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes)
+        updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes)
+    }, [selectedSpecs, selectedModes, fetchResults, updateUrl])
 
-    // Marqueurs + popups (plus d’auto-fit agressif)
+    // Marqueurs + popups + fitBounds (auto-fit si l’utilisateur n’a pas bougé)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
 
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
+
+        const bounds = new mapboxgl.LngLatBounds()
+        let count = 0
 
         results.forEach((r) => {
             if (r.lon != null && r.lat != null) {
@@ -281,40 +337,22 @@ function SearchPageInner() {
                     .addTo(m)
 
                 markersRef.current.push(mk)
+                bounds.extend(lngLat)
+                count++
             }
         })
+
+        if (!userMovedRef.current) {
+            if (count >= 2) {
+                ignoreNextMoveRef.current = true
+                m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
+            } else if (count === 1) {
+                const c = bounds.getCenter()
+                ignoreNextMoveRef.current = true
+                m.easeTo({ center: c, zoom: 12, duration: 600 })
+            }
+        }
     }, [results])
-
-    // “Utiliser ma position” → centre + fetch + pin rouge
-    const useMyLocation = useCallback(() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const { latitude, longitude } = pos.coords
-                const m = mapRef.current
-                if (!m) return
-                placeUserMarker(latitude, longitude)
-                suppressDirtyRef.current = true
-                m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
-                fetchResults(latitude, longitude, radiusRef.current)
-                updateUrl(latitude, longitude, radiusRef.current)
-                setIsDirty(false)
-            },
-            () => { /* ignore */ },
-            { enableHighAccuracy: true, timeout: 8000 },
-        )
-    }, [fetchResults, placeUserMarker, updateUrl])
-
-    const setHomeHere = useCallback(() => {
-        const m = mapRef.current
-        if (!m) return
-        const c = m.getCenter()
-        try {
-            localStorage.setItem('homeLat', String(c.lat))
-            localStorage.setItem('homeLng', String(c.lng))
-        } catch { /* ignore */ }
-        placeUserMarker(c.lat, c.lng)
-    }, [placeUserMarker])
 
     // Liste
     const items = useMemo(
@@ -331,17 +369,8 @@ function SearchPageInner() {
         [results],
     )
 
-    // Options de filtres (exemples)
-    const ALL_MODES = ['cabinet', 'domicile', 'visio'] as const
-    const ALL_SPECS: { slug: string; label: string }[] = [
-        { slug: 'pediatrie', label: 'Pédiatrie' },
-        { slug: 'neuro', label: 'Neurologie' },
-        { slug: 'geriatrie', label: 'Gériatrie' },
-        { slug: 'main', label: 'Main/Membre sup.' },
-    ]
-
     return (
-        <main className="grid gap-6 md:grid-cols-2">
+        <main className="grid gap-6 md:grid-cols-[360px_1fr]">
             <section className="space-y-3">
                 <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-semibold">Ergothérapeutes à proximité</h2>
@@ -361,54 +390,70 @@ function SearchPageInner() {
                         >
                             📍 Définir mon domicile ici
                         </button>
-                        <div className="flex items-center gap-2 text-sm">
-                            <label htmlFor="radius">Rayon</label>
-                            <input
-                                id="radius"
-                                type="range"
-                                min={MIN_R}
-                                max={MAX_R}
-                                step={5}
-                                value={radiusKm}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRadiusKm(Number(e.target.value))}
-                            />
-                            <span className="w-10 text-right">{radiusKm} km</span>
-                        </div>
                     </div>
                 </div>
 
                 {/* Filtres */}
-                <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-3">
-                        <span className="font-medium">Modes</span>
-                        {ALL_MODES.map((m) => (
-                            <label key={m} className="flex items-center gap-1">
-                                <input
-                                    type="checkbox"
-                                    checked={modesFilter.includes(m)}
-                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                                        setModesFilter((prev) => e.target.checked ? [...prev, m] : prev.filter((x) => x !== m))
-                                    }
-                                />
-                                {m}
-                            </label>
-                        ))}
+                <div className="rounded-xl border p-3 space-y-3">
+                    <div className="text-sm font-medium">Filtres</div>
+                    <div className="space-y-2">
+                        <div className="text-xs text-neutral-500">Spécialités</div>
+                        <div className="flex flex-wrap gap-2">
+                            {SPECIALTIES.map((s) => {
+                                const checked = selectedSpecs.includes(s.slug)
+                                return (
+                                    <label key={s.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={(e) =>
+                                                setSelectedSpecs((prev) =>
+                                                    e.target.checked ? [...prev, s.slug] : prev.filter((x) => x !== s.slug),
+                                                )
+                                            }
+                                        />
+                                        {s.label}
+                                    </label>
+                                )
+                            })}
+                        </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-3">
-                        <span className="font-medium">Spécialités</span>
-                        {ALL_SPECS.map((s) => (
-                            <label key={s.slug} className="flex items-center gap-1">
-                                <input
-                                    type="checkbox"
-                                    checked={specFilter.includes(s.slug)}
-                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                                        setSpecFilter((prev) => e.target.checked ? [...prev, s.slug] : prev.filter((x) => x !== s.slug))
-                                    }
-                                />
-                                {s.label}
-                            </label>
-                        ))}
+                    <div className="space-y-2">
+                        <div className="text-xs text-neutral-500">Modes</div>
+                        <div className="flex flex-wrap gap-2">
+                            {MODES.map((m) => {
+                                const checked = selectedModes.includes(m.value)
+                                return (
+                                    <label key={m.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={(e) =>
+                                                setSelectedModes((prev) =>
+                                                    e.target.checked ? [...prev, m.value] : prev.filter((x) => x !== m.value),
+                                                )
+                                            }
+                                        />
+                                        {m.label}
+                                    </label>
+                                )
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-sm">
+                        <label htmlFor="radius">Rayon</label>
+                        <input
+                            id="radius"
+                            type="range"
+                            min={MIN_R}
+                            max={MAX_R}
+                            step={5}
+                            value={radiusKm}
+                            onChange={(e) => setRadiusKm(Number(e.target.value))}
+                        />
+                        <span className="w-10 text-right">{radiusKm} km</span>
                     </div>
                 </div>
 
@@ -418,8 +463,7 @@ function SearchPageInner() {
 
                 {!loading && items.length === 0 && (
                     <div className="rounded-lg border bg-neutral-50 p-4 text-sm text-neutral-700">
-                        Aucun ergothérapeute trouvé dans ce rayon. Essayez d’élargir la zone
-                        ou de déplacer la carte.
+                        Aucun ergothérapeute trouvé. Essayez un autre rayon, déplacez la carte ou modifiez les filtres.
                     </div>
                 )}
 
@@ -438,16 +482,6 @@ function SearchPageInner() {
                                     )}
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    {it.booking && (
-                                        <a
-                                            className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
-                                            href={it.booking}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                        >
-                                            Prendre RDV
-                                        </a>
-                                    )}
                                     <a
                                         className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
                                         href={`/ergo/${it.slug}`}
@@ -461,24 +495,8 @@ function SearchPageInner() {
                 </ul>
             </section>
 
-            <section className="relative rounded-xl border">
-                {isDirty && (
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            const m = mapRef.current
-                            if (!m) return
-                            const c = m.getCenter()
-                            await fetchResults(c.lat, c.lng, radiusRef.current)
-                            updateUrl(c.lat, c.lng, radiusRef.current)
-                            setIsDirty(false)
-                        }}
-                        className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border bg-white px-4 py-2 text-sm shadow"
-                    >
-                        Chercher dans cette zone
-                    </button>
-                )}
-                <div ref={mapDiv} className="h-[520px] min-h-[520px] w-full rounded-xl" />
+            <section className="rounded-xl border">
+                <div ref={mapDiv} className="h-[560px] min-h-[560px] w-full rounded-xl" />
             </section>
         </main>
     )
