@@ -18,6 +18,7 @@ const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
 const DEFAULT_RADIUS_KM = 25
 const MIN_R = 5
 const MAX_R = 50
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
 type Result = {
     therapist_id: string
@@ -34,8 +35,6 @@ type Result = {
     lon?: number | null
     lat?: number | null
 }
-
-mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 
 type MapboxWithTelemetry = typeof mapboxgl & {
     setTelemetryEnabled?: (enabled: boolean) => void
@@ -130,6 +129,15 @@ function SearchPageInner() {
     useEffect(() => {
         if (mapRef.current || !mapDiv.current) return
 
+        // 0) Vérif du token côté client
+        if (!MAPBOX_TOKEN) {
+            console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant')
+            return
+        }
+        mapboxgl.accessToken = MAPBOX_TOKEN
+
+        // 1) Créer la carte
+        let destroyed = false
         const m = new mapboxgl.Map({
             container: mapDiv.current,
             style: 'mapbox://styles/mapbox/streets-v12',
@@ -138,6 +146,7 @@ function SearchPageInner() {
         })
         mapRef.current = m
 
+        // 2) Contrôles + écoute des erreurs (utile pour débug)
         m.addControl(new mapboxgl.NavigationControl(), 'top-right')
         m.addControl(
             new mapboxgl.GeolocateControl({
@@ -146,12 +155,21 @@ function SearchPageInner() {
             }),
             'top-right',
         )
-
-        m.on('load', async () => {
-            await fetchResults(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
-            updateUrl(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
+        m.on('error', (e) => {
+            console.error('[Mapbox error]', e?.error || e)
         })
 
+        // 3) S’assurer que la carte se dessine bien
+        const onLoad = async () => {
+            if (destroyed) return
+            // Petit resize pour forcer le rendu si le container vient d’apparaître
+            m.resize()
+            await fetchResults(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
+            updateUrl(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
+        }
+        m.on('load', onLoad)
+
+        // 4) Déplacements => nouvelle recherche
         const onMoveEnd = () => {
             const c = m.getCenter()
             fetchResults(c.lat, c.lng, radiusRef.current)
@@ -159,7 +177,10 @@ function SearchPageInner() {
         }
         m.on('moveend', onMoveEnd)
 
+        // 5) Nettoyage
         return () => {
+            destroyed = true
+            m.off('load', onLoad)
             m.off('moveend', onMoveEnd)
             m.remove()
         }
@@ -329,7 +350,7 @@ function SearchPageInner() {
             </section>
 
             <section className="rounded-xl border">
-                <div ref={mapDiv} className="h-[520px] w-full rounded-xl" />
+                <div ref={mapDiv} className="h-[520px] min-h-[520px] w-full rounded-xl" />
             </section>
         </main>
     )
