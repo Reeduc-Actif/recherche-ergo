@@ -11,21 +11,26 @@ export default function OnboardingLocation() {
 
     useEffect(() => {
         if (!mapDiv.current || mapRef.current) return
+        const initial = { lat: 50.8503, lng: 4.3517 } // centre d’amorçage uniquement
+
         const m = new mapboxgl.Map({
             container: mapDiv.current,
             style: 'mapbox://styles/mapbox/streets-v12',
-            center: [latlng.lng, latlng.lat],
+            center: [initial.lng, initial.lat],
             zoom: 12,
         })
         mapRef.current = m
+
         const mk = new mapboxgl.Marker({ color: 'red', draggable: true })
-            .setLngLat([latlng.lng, latlng.lat])
+            .setLngLat([initial.lng, initial.lat])
             .addTo(m)
         markerRef.current = mk
+
         mk.on('dragend', () => {
             const p = mk.getLngLat()
             setLatLng({ lat: p.lat, lng: p.lng })
         })
+
         return () => m.remove()
     }, [])
 

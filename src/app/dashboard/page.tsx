@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { createClient } from '@supabase/supabase-js'
@@ -64,7 +64,7 @@ export default function DashboardPage() {
                 if (json.ok && json.me) setMe(json.me)
                 else setError('Impossible de charger votre fiche.')
             }
-        } catch (e) {
+        } catch (_err) {
             setError('Erreur réseau.')
         } finally {
             setLoading(false)
@@ -130,9 +130,6 @@ function ProfilePanel({ me, onSaved }: { me: TherapistRow; onSaved: () => void }
     const [publish, setPublish] = useState(me.is_published)
     const [saving, setSaving] = useState(false)
     const [msg, setMsg] = useState<string | null>(null)
-
-    const toggle = (list: string[], v: string) =>
-        list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
 
     const save = useCallback(async () => {
         setSaving(true)
@@ -430,9 +427,4 @@ function MultiTags({
             })}
         </div>
     )
-}
-
-/* Tailwind helpers (utilise tes classes existantes) */
-declare global {
-    namespace JSX { interface IntrinsicElements { [elemName: string]: any } }
 }
