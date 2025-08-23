@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     const { lat, lng, radius_km, specialties_filter, modes_filter } = parsed.data
     const supabase = await supabaseServer()
 
-    const { data: rpcData, error } = await supabase.rpc('search_therapists', {
+    const { data: rpcData, error } = await supabase.rpc('search_therapists_v1', {
         lat: lat ?? null,
         lng: lng ?? null,
         radius_km,
