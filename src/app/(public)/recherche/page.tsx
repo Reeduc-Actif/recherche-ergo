@@ -36,18 +36,10 @@ type Result = {
     lat?: number | null
 }
 
-type MapboxWithTelemetry = typeof mapboxgl & {
-    setTelemetryEnabled?: (enabled: boolean) => void
-}
+type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
 const mb: MapboxWithTelemetry = mapboxgl
-if (typeof mb.setTelemetryEnabled === 'function') {
-    mb.setTelemetryEnabled(false)
-}
+if (typeof mb.setTelemetryEnabled === 'function') mb.setTelemetryEnabled(false)
 
-/**
- * Page exportée : on met l'intérieur dans une <Suspense> pour satisfaire Next
- * quand on utilise useSearchParams/useRouter dans un composant client.
- */
 export default function SearchPage() {
     return (
         <Suspense fallback={<div className="p-6 text-sm text-neutral-600">Chargement…</div>}>
@@ -72,12 +64,10 @@ function SearchPageInner() {
     const urlLng = Number(searchParams.get('lng'))
     const urlR = Number(searchParams.get('r'))
 
-    // ⚠️ Memo pour stabiliser la dépendance
-    const initialCenter = useMemo<[number, number]>(() => {
-        return Number.isFinite(urlLat) && Number.isFinite(urlLng)
-            ? [urlLng, urlLat]
-            : INITIAL_CENTER
-    }, [urlLat, urlLng])
+    // Centre initial en ref pour éviter de ré-exécuter l'effet d'init
+    const initialCenterRef = useRef<[number, number]>(
+        Number.isFinite(urlLat) && Number.isFinite(urlLng) ? [urlLng, urlLat] : INITIAL_CENTER,
+    )
 
     const [radiusKm, setRadiusKm] = useState<number>(
         Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
@@ -87,19 +77,19 @@ function SearchPageInner() {
         radiusRef.current = radiusKm
     }, [radiusKm])
 
-    // Helpers URL
+    // Helpers URL (stable, ne dépend pas de searchParams)
     const updateUrl = useCallback(
         (lat: number, lng: number, r: number) => {
-            const sp = new URLSearchParams(Array.from(searchParams.entries()))
+            const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
             sp.set('lat', lat.toFixed(6))
             sp.set('lng', lng.toFixed(6))
             sp.set('r', String(r))
             router.replace(`${pathname}?${sp.toString()}`)
         },
-        [pathname, router, searchParams],
+        [pathname, router],
     )
 
-    // Fetch résultats
+    // Fetch résultats (stable)
     const fetchResults = useCallback(
         async (lat?: number, lng?: number, r: number = radiusRef.current) => {
             try {
@@ -107,12 +97,7 @@ function SearchPageInner() {
                 const res = await fetch('/api/search', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                        lat,
-                        lng,
-                        radius_km: r,
-                        // specialties_filter / modes_filter à brancher ici plus tard
-                    }),
+                    body: JSON.stringify({ lat, lng, radius_km: r }),
                 })
                 const json = (await res.json()) as { ok?: boolean; results?: Result[] }
                 setResults(json.ok && json.results ? json.results : [])
@@ -125,28 +110,23 @@ function SearchPageInner() {
         [],
     )
 
-    // Init carte
+    // Init carte — tourne une seule fois
     useEffect(() => {
-        if (mapRef.current || !mapDiv.current) return
-
-        // 0) Vérif du token côté client
+        if (!mapDiv.current || mapRef.current) return
         if (!MAPBOX_TOKEN) {
             console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant')
             return
         }
         mapboxgl.accessToken = MAPBOX_TOKEN
 
-        // 1) Créer la carte
-        let destroyed = false
         const m = new mapboxgl.Map({
             container: mapDiv.current,
             style: 'mapbox://styles/mapbox/streets-v12',
-            center: initialCenter,
+            center: initialCenterRef.current,
             zoom: 11,
         })
         mapRef.current = m
 
-        // 2) Contrôles + écoute des erreurs (utile pour débug)
         m.addControl(new mapboxgl.NavigationControl(), 'top-right')
         m.addControl(
             new mapboxgl.GeolocateControl({
@@ -155,36 +135,30 @@ function SearchPageInner() {
             }),
             'top-right',
         )
-        m.on('error', (e) => {
-            console.error('[Mapbox error]', e?.error || e)
-        })
+        m.on('error', (e) => console.error('[Mapbox error]', (e as any)?.error || e))
 
-        // 3) S’assurer que la carte se dessine bien
         const onLoad = async () => {
-            if (destroyed) return
-            // Petit resize pour forcer le rendu si le container vient d’apparaître
             m.resize()
-            await fetchResults(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
-            updateUrl(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
+            const c = m.getCenter()
+            await fetchResults(c.lat, c.lng, radiusRef.current)
+            updateUrl(c.lat, c.lng, radiusRef.current)
         }
-        m.on('load', onLoad)
-
-        // 4) Déplacements => nouvelle recherche
         const onMoveEnd = () => {
             const c = m.getCenter()
             fetchResults(c.lat, c.lng, radiusRef.current)
             updateUrl(c.lat, c.lng, radiusRef.current)
         }
+
+        m.on('load', onLoad)
         m.on('moveend', onMoveEnd)
 
-        // 5) Nettoyage
         return () => {
-            destroyed = true
             m.off('load', onLoad)
             m.off('moveend', onMoveEnd)
             m.remove()
+            mapRef.current = null
         }
-    }, [fetchResults, initialCenter, updateUrl])
+    }, []) // ⬅️ vide : pas de re-création = pas de disparition
 
     // Si on change le rayon → relancer
     useEffect(() => {
