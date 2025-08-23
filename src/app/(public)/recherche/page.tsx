@@ -132,10 +132,23 @@ function SearchPageInner() {
         const m = mapRef.current
         if (!m) return
         if (userMarkerRef.current) userMarkerRef.current.remove()
-        userMarkerRef.current = new mapboxgl.Marker({ color: '#d32f2f' })
+
+        // Élément DOM rouge bien visible
+        const el = document.createElement('div')
+        el.style.width = '18px'
+        el.style.height = '18px'
+        el.style.borderRadius = '50%'
+        el.style.background = '#e11d48' // rose/rouge
+        el.style.boxShadow = '0 0 0 3px #fff, 0 0 0 6px rgba(225,29,72,.35)' // halo
+        el.style.border = '2px solid #fff'
+
+        userMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: 'center' })
             .setLngLat([lng, lat])
-            .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Vous êtes ici'))
+            .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Votre position'))
             .addTo(m)
+
+        // (Facultatif) ouvrir la popup automatiquement :
+        // userMarkerRef.current.togglePopup()
     }, [])
 
     // Init carte — une seule fois
@@ -292,6 +305,17 @@ function SearchPageInner() {
         )
     }, [fetchResults, placeUserMarker, updateUrl])
 
+    const setHomeHere = useCallback(() => {
+        const m = mapRef.current
+        if (!m) return
+        const c = m.getCenter()
+        try {
+            localStorage.setItem('homeLat', String(c.lat))
+            localStorage.setItem('homeLng', String(c.lng))
+        } catch { /* ignore */ }
+        placeUserMarker(c.lat, c.lng)
+    }, [placeUserMarker])
+
     // Liste
     const items = useMemo(
         () =>
@@ -329,6 +353,13 @@ function SearchPageInner() {
                             type="button"
                         >
                             🧭 Utiliser ma position
+                        </button>
+                        <button
+                            onClick={setHomeHere}
+                            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-neutral-50"
+                            type="button"
+                        >
+                            📍 Définir mon domicile ici
                         </button>
                         <div className="flex items-center gap-2 text-sm">
                             <label htmlFor="radius">Rayon</label>
