@@ -1,13 +1,15 @@
-// src/app/(public)/recherche/page.tsx
 'use client'
 
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 /** Centre par défaut : Bruxelles [lng, lat] */
 const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
 const DEFAULT_RADIUS_KM = 25
+const MIN_R = 5
+const MAX_R = 50
 
 type Result = {
     therapist_id: string
@@ -35,7 +37,6 @@ if (typeof mb.setTelemetryEnabled === 'function') {
     mb.setTelemetryEnabled(false)
 }
 
-
 export default function SearchPage() {
     const mapRef = useRef<mapboxgl.Map | null>(null)
     const mapDiv = useRef<HTMLDivElement | null>(null)
@@ -43,28 +44,66 @@ export default function SearchPage() {
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
-    // Fetch résultats
-    const fetchResults = async (lat?: number, lng?: number) => {
-        try {
-            setLoading(true)
-            const res = await fetch('/api/search', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                    lat,
-                    lng,
-                    radius_km: DEFAULT_RADIUS_KM,
-                    // Tu pourras brancher specialties_filter / modes_filter ici si besoin
-                }),
-            })
-            const json = (await res.json()) as { ok?: boolean; results?: Result[] }
-            setResults((json.ok && json.results) ? json.results : [])
-        } catch {
-            setResults([])
-        } finally {
-            setLoading(false)
-        }
-    }
+    // --- NEW: URL state
+    const searchParams = useSearchParams()
+    const router = useRouter()
+    const pathname = usePathname()
+
+    const urlLat = Number(searchParams.get('lat'))
+    const urlLng = Number(searchParams.get('lng'))
+    const urlR = Number(searchParams.get('r'))
+
+    const initialCenter: [number, number] =
+        Number.isFinite(urlLat) && Number.isFinite(urlLng)
+            ? [urlLng, urlLat]
+            : INITIAL_CENTER
+    const [radiusKm, setRadiusKm] = useState<number>(
+        Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
+    )
+
+    // pour disposer toujours de la dernière valeur dans les callbacks de Mapbox
+    const radiusRef = useRef(radiusKm)
+    useEffect(() => {
+        radiusRef.current = radiusKm
+    }, [radiusKm])
+
+    // --- helpers URL
+    const updateUrl = useCallback(
+        (lat: number, lng: number, r: number) => {
+            const sp = new URLSearchParams(Array.from(searchParams.entries()))
+            sp.set('lat', lat.toFixed(6))
+            sp.set('lng', lng.toFixed(6))
+            sp.set('r', String(r))
+            router.replace(`${pathname}?${sp.toString()}`)
+        },
+        [pathname, router, searchParams],
+    )
+
+    // Fetch résultats (accepte rayon)
+    const fetchResults = useCallback(
+        async (lat?: number, lng?: number, r: number = radiusRef.current) => {
+            try {
+                setLoading(true)
+                const res = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        lat,
+                        lng,
+                        radius_km: r,
+                        // specialties_filter / modes_filter pourront être ajoutés ici
+                    }),
+                })
+                const json = (await res.json()) as { ok?: boolean; results?: Result[] }
+                setResults(json.ok && json.results ? json.results : [])
+            } catch {
+                setResults([])
+            } finally {
+                setLoading(false)
+            }
+        },
+        [],
+    )
 
     // Init carte
     useEffect(() => {
@@ -73,7 +112,7 @@ export default function SearchPage() {
         const m = new mapboxgl.Map({
             container: mapDiv.current,
             style: 'mapbox://styles/mapbox/streets-v12',
-            center: INITIAL_CENTER,
+            center: initialCenter,
             zoom: 11,
         })
         mapRef.current = m
@@ -88,19 +127,38 @@ export default function SearchPage() {
         )
 
         m.on('load', async () => {
-            // première recherche centrée sur Bruxelles
-            await fetchResults(INITIAL_CENTER[1], INITIAL_CENTER[0])
+            await fetchResults(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
+            updateUrl(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
         })
 
-        return () => m.remove()
-    }, [])
+        // NEW: quand on déplace la carte, on relance la recherche
+        const onMoveEnd = () => {
+            const c = m.getCenter()
+            fetchResults(c.lat, c.lng, radiusRef.current)
+            updateUrl(c.lat, c.lng, radiusRef.current)
+        }
+        m.on('moveend', onMoveEnd)
 
-    // Marqueurs + popups + fitBounds
+        return () => {
+            m.off('moveend', onMoveEnd)
+            m.remove()
+        }
+    }, [fetchResults, initialCenter, updateUrl])
+
+    // NEW: si on change le rayon → relancer autour du centre courant + maj URL
+    useEffect(() => {
+        const m = mapRef.current
+        if (!m) return
+        const c = m.getCenter()
+        fetchResults(c.lat, c.lng, radiusKm)
+        updateUrl(c.lat, c.lng, radiusKm)
+    }, [radiusKm, fetchResults, updateUrl])
+
+    // Marqueurs + popups + fitBounds (inchangé)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
 
-        // Nettoyer l'existant
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
 
@@ -120,7 +178,6 @@ export default function SearchPage() {
             <a href="/ergo/${escapeAttr(r.slug)}" style="font-size:12px;text-decoration:underline;">Voir le profil</a>
           </div>
         `
-
                 const mk = new mapboxgl.Marker()
                     .setLngLat(lngLat)
                     .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
@@ -132,15 +189,13 @@ export default function SearchPage() {
             }
         })
 
-        // Ajustement de la vue
         if (count >= 2) {
             m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
         } else if (count === 1) {
             const c = bounds.getCenter()
             m.easeTo({ center: c, zoom: 12, duration: 600 })
         } else {
-            // Aucun résultat → retour au centre par défaut
-            m.easeTo({ center: INITIAL_CENTER, zoom: 11, duration: 600 })
+            m.easeTo({ center: m.getCenter(), zoom: m.getZoom(), duration: 0 })
         }
     }, [results])
 
@@ -159,10 +214,56 @@ export default function SearchPage() {
         [results],
     )
 
+    // NEW: “Utiliser ma position”
+    const useMyLocation = useCallback(() => {
+        if (!navigator.geolocation) return
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const { latitude, longitude } = pos.coords
+                const m = mapRef.current
+                if (!m) return
+                m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
+                fetchResults(latitude, longitude, radiusRef.current)
+                updateUrl(latitude, longitude, radiusRef.current)
+            },
+            () => {
+                // silencieux si refusé
+            },
+            { enableHighAccuracy: true, timeout: 8000 },
+        )
+    }, [fetchResults, updateUrl])
+
     return (
         <main className="grid gap-6 md:grid-cols-2">
             <section className="space-y-3">
-                <h2 className="text-2xl font-semibold">Ergothérapeutes à proximité</h2>
+                <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-semibold">Ergothérapeutes à proximité</h2>
+
+                    {/* NEW: contrôles rapides */}
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={useMyLocation}
+                            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-neutral-50"
+                            type="button"
+                        >
+                            🧭 Utiliser ma position
+                        </button>
+                        <div className="flex items-center gap-2 text-sm">
+                            <label htmlFor="radius">Rayon</label>
+                            <input
+                                id="radius"
+                                type="range"
+                                min={MIN_R}
+                                max={MAX_R}
+                                step={5}
+                                value={radiusKm}
+                                onChange={(e) => setRadiusKm(Number(e.target.value))}
+                            />
+                            <span className="w-10 text-right">{radiusKm} km</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div className="text-sm text-neutral-600">
                     {loading ? 'Chargement…' : `${items.length} résultat(s)`}
                 </div>
@@ -228,8 +329,9 @@ function escapeHtml(input: string) {
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;')
 }
-
 function escapeAttr(input: string) {
-    // Pour l’instant on réutilise le même échappement
     return escapeHtml(input)
+}
+function clamp(n: number, a: number, b: number) {
+    return Math.max(a, Math.min(b, n))
 }
