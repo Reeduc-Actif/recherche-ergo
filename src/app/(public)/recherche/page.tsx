@@ -55,6 +55,11 @@ function SearchPageInner() {
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
+    // anti-boucle : ignorer le moveend déclenché par un fitBounds/easeTo programmatique
+    const ignoreNextMoveRef = useRef(false)
+    // ne faire l’auto-fit qu’avant la 1re interaction user (drag/zoom)
+    const userMovedRef = useRef(false)
+
     // --- URL state
     const searchParams = useSearchParams()
     const router = useRouter()
@@ -77,7 +82,7 @@ function SearchPageInner() {
         radiusRef.current = radiusKm
     }, [radiusKm])
 
-    // Helpers URL (stable, ne dépend pas de searchParams)
+    // Helpers URL (stable)
     const updateUrl = useCallback(
         (lat: number, lng: number, r: number) => {
             const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
@@ -110,7 +115,7 @@ function SearchPageInner() {
         [],
     )
 
-    // Init carte — tourne une seule fois
+    // Init carte — une seule fois
     useEffect(() => {
         if (!mapDiv.current || mapRef.current) return
         if (!MAPBOX_TOKEN) {
@@ -136,6 +141,10 @@ function SearchPageInner() {
             'top-right',
         )
 
+        // marquer qu’un humain a bougé → on stoppera l’auto-fit
+        m.on('dragstart', () => { userMovedRef.current = true })
+        m.on('zoomstart', () => { userMovedRef.current = true })
+
         m.on('error', (ev: unknown) => {
             const err = (ev as { error?: unknown })?.error ?? ev
             console.error('[Mapbox error]', err)
@@ -148,6 +157,10 @@ function SearchPageInner() {
             updateUrl(c.lat, c.lng, radiusRef.current)
         }
         const onMoveEnd = () => {
+            if (ignoreNextMoveRef.current) {
+                ignoreNextMoveRef.current = false
+                return
+            }
             const c = m.getCenter()
             fetchResults(c.lat, c.lng, radiusRef.current)
             updateUrl(c.lat, c.lng, radiusRef.current)
@@ -162,18 +175,19 @@ function SearchPageInner() {
             m.remove()
             mapRef.current = null
         }
-    }, []) // ⬅️ vide : pas de re-création = pas de disparition
+    }, [fetchResults, updateUrl])
 
-    // Si on change le rayon → relancer
+    // Si on change le rayon → relancer + réautoriser un auto-fit unique
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
+        userMovedRef.current = false
         const c = m.getCenter()
         fetchResults(c.lat, c.lng, radiusKm)
         updateUrl(c.lat, c.lng, radiusKm)
     }, [radiusKm, fetchResults, updateUrl])
 
-    // Marqueurs + popups + fitBounds
+    // Marqueurs + popups + fitBounds (auto-fit seulement si l’utilisateur n’a pas bougé)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
@@ -208,11 +222,15 @@ function SearchPageInner() {
             }
         })
 
-        if (count >= 2) {
-            m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
-        } else if (count === 1) {
-            const c = bounds.getCenter()
-            m.easeTo({ center: c, zoom: 12, duration: 600 })
+        if (!userMovedRef.current) {
+            if (count >= 2) {
+                ignoreNextMoveRef.current = true
+                m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
+            } else if (count === 1) {
+                const c = bounds.getCenter()
+                ignoreNextMoveRef.current = true
+                m.easeTo({ center: c, zoom: 12, duration: 600 })
+            }
         }
     }, [results])
 
@@ -239,6 +257,8 @@ function SearchPageInner() {
                 const { latitude, longitude } = pos.coords
                 const m = mapRef.current
                 if (!m) return
+                userMovedRef.current = false
+                ignoreNextMoveRef.current = true
                 m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
                 fetchResults(latitude, longitude, radiusRef.current)
                 updateUrl(latitude, longitude, radiusRef.current)
