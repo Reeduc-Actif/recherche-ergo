@@ -1,8 +1,16 @@
 'use client'
+export const dynamic = 'force-dynamic'
 
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+    Suspense,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 /** Centre par défaut : Bruxelles [lng, lat] */
@@ -37,14 +45,26 @@ if (typeof mb.setTelemetryEnabled === 'function') {
     mb.setTelemetryEnabled(false)
 }
 
+/**
+ * Page exportée : on met l'intérieur dans une <Suspense> pour satisfaire Next
+ * quand on utilise useSearchParams/useRouter dans un composant client.
+ */
 export default function SearchPage() {
+    return (
+        <Suspense fallback={<div className="p-6 text-sm text-neutral-600">Chargement…</div>}>
+            <SearchPageInner />
+        </Suspense>
+    )
+}
+
+function SearchPageInner() {
     const mapRef = useRef<mapboxgl.Map | null>(null)
     const mapDiv = useRef<HTMLDivElement | null>(null)
     const markersRef = useRef<mapboxgl.Marker[]>([])
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
-    // --- NEW: URL state
+    // --- URL state
     const searchParams = useSearchParams()
     const router = useRouter()
     const pathname = usePathname()
@@ -53,21 +73,22 @@ export default function SearchPage() {
     const urlLng = Number(searchParams.get('lng'))
     const urlR = Number(searchParams.get('r'))
 
-    const initialCenter: [number, number] =
-        Number.isFinite(urlLat) && Number.isFinite(urlLng)
+    // ⚠️ Memo pour stabiliser la dépendance
+    const initialCenter = useMemo<[number, number]>(() => {
+        return Number.isFinite(urlLat) && Number.isFinite(urlLng)
             ? [urlLng, urlLat]
             : INITIAL_CENTER
+    }, [urlLat, urlLng])
+
     const [radiusKm, setRadiusKm] = useState<number>(
         Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
     )
-
-    // pour disposer toujours de la dernière valeur dans les callbacks de Mapbox
     const radiusRef = useRef(radiusKm)
     useEffect(() => {
         radiusRef.current = radiusKm
     }, [radiusKm])
 
-    // --- helpers URL
+    // Helpers URL
     const updateUrl = useCallback(
         (lat: number, lng: number, r: number) => {
             const sp = new URLSearchParams(Array.from(searchParams.entries()))
@@ -79,7 +100,7 @@ export default function SearchPage() {
         [pathname, router, searchParams],
     )
 
-    // Fetch résultats (accepte rayon)
+    // Fetch résultats
     const fetchResults = useCallback(
         async (lat?: number, lng?: number, r: number = radiusRef.current) => {
             try {
@@ -91,7 +112,7 @@ export default function SearchPage() {
                         lat,
                         lng,
                         radius_km: r,
-                        // specialties_filter / modes_filter pourront être ajoutés ici
+                        // specialties_filter / modes_filter à brancher ici plus tard
                     }),
                 })
                 const json = (await res.json()) as { ok?: boolean; results?: Result[] }
@@ -131,7 +152,6 @@ export default function SearchPage() {
             updateUrl(m.getCenter().lat, m.getCenter().lng, radiusRef.current)
         })
 
-        // NEW: quand on déplace la carte, on relance la recherche
         const onMoveEnd = () => {
             const c = m.getCenter()
             fetchResults(c.lat, c.lng, radiusRef.current)
@@ -145,7 +165,7 @@ export default function SearchPage() {
         }
     }, [fetchResults, initialCenter, updateUrl])
 
-    // NEW: si on change le rayon → relancer autour du centre courant + maj URL
+    // Si on change le rayon → relancer
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
@@ -154,7 +174,7 @@ export default function SearchPage() {
         updateUrl(c.lat, c.lng, radiusKm)
     }, [radiusKm, fetchResults, updateUrl])
 
-    // Marqueurs + popups + fitBounds (inchangé)
+    // Marqueurs + popups + fitBounds
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
@@ -194,12 +214,10 @@ export default function SearchPage() {
         } else if (count === 1) {
             const c = bounds.getCenter()
             m.easeTo({ center: c, zoom: 12, duration: 600 })
-        } else {
-            m.easeTo({ center: m.getCenter(), zoom: m.getZoom(), duration: 0 })
         }
     }, [results])
 
-    // Liste affichée à gauche
+    // Liste
     const items = useMemo(
         () =>
             results.map((r) => ({
@@ -214,7 +232,7 @@ export default function SearchPage() {
         [results],
     )
 
-    // NEW: “Utiliser ma position”
+    // “Utiliser ma position”
     const useMyLocation = useCallback(() => {
         if (!navigator.geolocation) return
         navigator.geolocation.getCurrentPosition(
@@ -226,9 +244,7 @@ export default function SearchPage() {
                 fetchResults(latitude, longitude, radiusRef.current)
                 updateUrl(latitude, longitude, radiusRef.current)
             },
-            () => {
-                // silencieux si refusé
-            },
+            () => { },
             { enableHighAccuracy: true, timeout: 8000 },
         )
     }, [fetchResults, updateUrl])
@@ -239,7 +255,6 @@ export default function SearchPage() {
                 <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-semibold">Ergothérapeutes à proximité</h2>
 
-                    {/* NEW: contrôles rapides */}
                     <div className="flex items-center gap-3">
                         <button
                             onClick={useMyLocation}
@@ -268,7 +283,7 @@ export default function SearchPage() {
                     {loading ? 'Chargement…' : `${items.length} résultat(s)`}
                 </div>
 
-                {(!loading && items.length === 0) && (
+                {!loading && items.length === 0 && (
                     <div className="rounded-lg border bg-neutral-50 p-4 text-sm text-neutral-700">
                         Aucun ergothérapeute trouvé dans ce rayon. Essayez d’élargir la zone
                         ou de déplacer la carte.
@@ -320,7 +335,7 @@ export default function SearchPage() {
     )
 }
 
-/** Utilitaires : échappement simple pour le HTML/attr des popups */
+/** Utilitaires */
 function escapeHtml(input: string) {
     return input
         .replaceAll('&', '&amp;')
