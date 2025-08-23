@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import type React from 'react'
 import {
     Suspense,
     useCallback,
@@ -52,13 +53,14 @@ function SearchPageInner() {
     const mapRef = useRef<mapboxgl.Map | null>(null)
     const mapDiv = useRef<HTMLDivElement | null>(null)
     const markersRef = useRef<mapboxgl.Marker[]>([])
+    const userMarkerRef = useRef<mapboxgl.Marker | null>(null)
+
     const [results, setResults] = useState<Result[]>([])
     const [loading, setLoading] = useState(false)
 
-    // anti-boucle : ignorer le moveend déclenché par un fitBounds/easeTo programmatique
-    const ignoreNextMoveRef = useRef(false)
-    // ne faire l’auto-fit qu’avant la 1re interaction user (drag/zoom)
-    const userMovedRef = useRef(false)
+    // état "zone sale" → bouton "Chercher dans cette zone"
+    const [isDirty, setIsDirty] = useState(false)
+    const suppressDirtyRef = useRef(false) // ne pas afficher le bouton lors des moves programmatiques
 
     // --- URL state
     const searchParams = useSearchParams()
@@ -69,7 +71,7 @@ function SearchPageInner() {
     const urlLng = Number(searchParams.get('lng'))
     const urlR = Number(searchParams.get('r'))
 
-    // Centre initial en ref pour éviter de ré-exécuter l'effet d'init
+    // Centre initial en ref (pour éviter de ré-initialiser la carte)
     const initialCenterRef = useRef<[number, number]>(
         Number.isFinite(urlLat) && Number.isFinite(urlLng) ? [urlLng, urlLat] : INITIAL_CENTER,
     )
@@ -81,6 +83,10 @@ function SearchPageInner() {
     useEffect(() => {
         radiusRef.current = radiusKm
     }, [radiusKm])
+
+    // Filtres
+    const [modesFilter, setModesFilter] = useState<string[]>([])
+    const [specFilter, setSpecFilter] = useState<string[]>([])
 
     // Helpers URL (stable)
     const updateUrl = useCallback(
@@ -102,7 +108,13 @@ function SearchPageInner() {
                 const res = await fetch('/api/search', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ lat, lng, radius_km: r }),
+                    body: JSON.stringify({
+                        lat,
+                        lng,
+                        radius_km: r,
+                        specialties_filter: specFilter.length ? specFilter : undefined,
+                        modes_filter: modesFilter.length ? modesFilter : undefined,
+                    }),
                 })
                 const json = (await res.json()) as { ok?: boolean; results?: Result[] }
                 setResults(json.ok && json.results ? json.results : [])
@@ -112,8 +124,19 @@ function SearchPageInner() {
                 setLoading(false)
             }
         },
-        [],
+        [modesFilter, specFilter],
     )
+
+    // Utilitaire: placer/mettre à jour le pin utilisateur (domicile / position)
+    const placeUserMarker = useCallback((lat: number, lng: number) => {
+        const m = mapRef.current
+        if (!m) return
+        if (userMarkerRef.current) userMarkerRef.current.remove()
+        userMarkerRef.current = new mapboxgl.Marker({ color: '#d32f2f' })
+            .setLngLat([lng, lat])
+            .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Vous êtes ici'))
+            .addTo(m)
+    }, [])
 
     // Init carte — une seule fois
     useEffect(() => {
@@ -141,62 +164,90 @@ function SearchPageInner() {
             'top-right',
         )
 
-        // marquer qu’un humain a bougé → on stoppera l’auto-fit
-        m.on('dragstart', () => { userMovedRef.current = true })
-        m.on('zoomstart', () => { userMovedRef.current = true })
+        // Marquer la carte "sale" uniquement quand l’utilisateur bouge
+        const markDirty = () => {
+            if (suppressDirtyRef.current) {
+                suppressDirtyRef.current = false
+                return
+            }
+            setIsDirty(true)
+        }
+        m.on('dragend', markDirty)
+        m.on('zoomend', markDirty)
 
-        m.on('error', (ev: unknown) => {
-            const err = (ev as { error?: unknown })?.error ?? ev
-            console.error('[Mapbox error]', err)
+        // Erreurs Mapbox
+        m.on('error', (ev: mapboxgl.ErrorEvent) => {
+            console.error('[Mapbox error]', ev?.error || ev)
         })
 
+        // Au chargement: 1er fetch + pin domicile si dispo
         const onLoad = async () => {
             m.resize()
+            // Domicile via URL ?home_lat&home_lng ou via localStorage 'homeLat'/'homeLng'
+            let homeLat = Number(searchParams.get('home_lat'))
+            let homeLng = Number(searchParams.get('home_lng'))
+            if (!Number.isFinite(homeLat) || !Number.isFinite(homeLng)) {
+                try {
+                    const lsLat = Number(localStorage.getItem('homeLat') || '')
+                    const lsLng = Number(localStorage.getItem('homeLng') || '')
+                    if (Number.isFinite(lsLat) && Number.isFinite(lsLng)) {
+                        homeLat = lsLat
+                        homeLng = lsLng
+                    }
+                } catch {
+                    // ignore
+                }
+            }
+            if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) {
+                placeUserMarker(homeLat as number, homeLng as number)
+            }
+
             const c = m.getCenter()
             await fetchResults(c.lat, c.lng, radiusRef.current)
             updateUrl(c.lat, c.lng, radiusRef.current)
-        }
-        const onMoveEnd = () => {
-            if (ignoreNextMoveRef.current) {
-                ignoreNextMoveRef.current = false
-                return
-            }
-            const c = m.getCenter()
-            fetchResults(c.lat, c.lng, radiusRef.current)
-            updateUrl(c.lat, c.lng, radiusRef.current)
+            setIsDirty(false)
         }
 
         m.on('load', onLoad)
-        m.on('moveend', onMoveEnd)
 
         return () => {
+            m.off('dragend', markDirty)
+            m.off('zoomend', markDirty)
             m.off('load', onLoad)
-            m.off('moveend', onMoveEnd)
             m.remove()
             mapRef.current = null
+            userMarkerRef.current = null
         }
-    }, [fetchResults, updateUrl])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fetchResults, placeUserMarker, updateUrl]) // callbacks stables
 
-    // Si on change le rayon → relancer + réautoriser un auto-fit unique
+    // Si le rayon change → on ne bouge pas la carte, on refetch directement
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
-        userMovedRef.current = false
         const c = m.getCenter()
         fetchResults(c.lat, c.lng, radiusKm)
         updateUrl(c.lat, c.lng, radiusKm)
+        setIsDirty(false)
     }, [radiusKm, fetchResults, updateUrl])
 
-    // Marqueurs + popups + fitBounds (auto-fit seulement si l’utilisateur n’a pas bougé)
+    // Si les filtres changent → refetch immédiat au centre courant
+    useEffect(() => {
+        const m = mapRef.current
+        if (!m) return
+        const c = m.getCenter()
+        fetchResults(c.lat, c.lng, radiusRef.current)
+        updateUrl(c.lat, c.lng, radiusRef.current)
+        setIsDirty(false)
+    }, [modesFilter, specFilter, fetchResults, updateUrl])
+
+    // Marqueurs + popups (plus d’auto-fit agressif)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
 
         markersRef.current.forEach((mk) => mk.remove())
         markersRef.current = []
-
-        const bounds = new mapboxgl.LngLatBounds()
-        let count = 0
 
         results.forEach((r) => {
             if (r.lon != null && r.lat != null) {
@@ -217,22 +268,29 @@ function SearchPageInner() {
                     .addTo(m)
 
                 markersRef.current.push(mk)
-                bounds.extend(lngLat)
-                count++
             }
         })
-
-        if (!userMovedRef.current) {
-            if (count >= 2) {
-                ignoreNextMoveRef.current = true
-                m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
-            } else if (count === 1) {
-                const c = bounds.getCenter()
-                ignoreNextMoveRef.current = true
-                m.easeTo({ center: c, zoom: 12, duration: 600 })
-            }
-        }
     }, [results])
+
+    // “Utiliser ma position” → centre + fetch + pin rouge
+    const useMyLocation = useCallback(() => {
+        if (!navigator.geolocation) return
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const { latitude, longitude } = pos.coords
+                const m = mapRef.current
+                if (!m) return
+                placeUserMarker(latitude, longitude)
+                suppressDirtyRef.current = true
+                m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
+                fetchResults(latitude, longitude, radiusRef.current)
+                updateUrl(latitude, longitude, radiusRef.current)
+                setIsDirty(false)
+            },
+            () => { /* ignore */ },
+            { enableHighAccuracy: true, timeout: 8000 },
+        )
+    }, [fetchResults, placeUserMarker, updateUrl])
 
     // Liste
     const items = useMemo(
@@ -249,24 +307,14 @@ function SearchPageInner() {
         [results],
     )
 
-    // “Utiliser ma position”
-    const useMyLocation = useCallback(() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const { latitude, longitude } = pos.coords
-                const m = mapRef.current
-                if (!m) return
-                userMovedRef.current = false
-                ignoreNextMoveRef.current = true
-                m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
-                fetchResults(latitude, longitude, radiusRef.current)
-                updateUrl(latitude, longitude, radiusRef.current)
-            },
-            () => { },
-            { enableHighAccuracy: true, timeout: 8000 },
-        )
-    }, [fetchResults, updateUrl])
+    // Options de filtres (exemples)
+    const ALL_MODES = ['cabinet', 'domicile', 'visio'] as const
+    const ALL_SPECS: { slug: string; label: string }[] = [
+        { slug: 'pediatrie', label: 'Pédiatrie' },
+        { slug: 'neuro', label: 'Neurologie' },
+        { slug: 'geriatrie', label: 'Gériatrie' },
+        { slug: 'main', label: 'Main/Membre sup.' },
+    ]
 
     return (
         <main className="grid gap-6 md:grid-cols-2">
@@ -291,10 +339,45 @@ function SearchPageInner() {
                                 max={MAX_R}
                                 step={5}
                                 value={radiusKm}
-                                onChange={(e) => setRadiusKm(Number(e.target.value))}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRadiusKm(Number(e.target.value))}
                             />
                             <span className="w-10 text-right">{radiusKm} km</span>
                         </div>
+                    </div>
+                </div>
+
+                {/* Filtres */}
+                <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <span className="font-medium">Modes</span>
+                        {ALL_MODES.map((m) => (
+                            <label key={m} className="flex items-center gap-1">
+                                <input
+                                    type="checkbox"
+                                    checked={modesFilter.includes(m)}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                        setModesFilter((prev) => e.target.checked ? [...prev, m] : prev.filter((x) => x !== m))
+                                    }
+                                />
+                                {m}
+                            </label>
+                        ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                        <span className="font-medium">Spécialités</span>
+                        {ALL_SPECS.map((s) => (
+                            <label key={s.slug} className="flex items-center gap-1">
+                                <input
+                                    type="checkbox"
+                                    checked={specFilter.includes(s.slug)}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                        setSpecFilter((prev) => e.target.checked ? [...prev, s.slug] : prev.filter((x) => x !== s.slug))
+                                    }
+                                />
+                                {s.label}
+                            </label>
+                        ))}
                     </div>
                 </div>
 
@@ -347,7 +430,23 @@ function SearchPageInner() {
                 </ul>
             </section>
 
-            <section className="rounded-xl border">
+            <section className="relative rounded-xl border">
+                {isDirty && (
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            const m = mapRef.current
+                            if (!m) return
+                            const c = m.getCenter()
+                            await fetchResults(c.lat, c.lng, radiusRef.current)
+                            updateUrl(c.lat, c.lng, radiusRef.current)
+                            setIsDirty(false)
+                        }}
+                        className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border bg-white px-4 py-2 text-sm shadow"
+                    >
+                        Chercher dans cette zone
+                    </button>
+                )}
                 <div ref={mapDiv} className="h-[520px] min-h-[520px] w-full rounded-xl" />
             </section>
         </main>
