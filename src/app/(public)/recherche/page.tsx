@@ -135,7 +135,11 @@ function SearchPageInner() {
             }),
             'top-right',
         )
-        m.on('error', (e) => console.error('[Mapbox error]', (e as any)?.error || e))
+
+        m.on('error', (ev: unknown) => {
+            const err = (ev as { error?: unknown })?.error ?? ev
+            console.error('[Mapbox error]', err)
+        })
 
         const onLoad = async () => {
             m.resize()
