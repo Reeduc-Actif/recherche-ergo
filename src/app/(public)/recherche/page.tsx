@@ -17,7 +17,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
 const DEFAULT_RADIUS_KM = 25
 const MIN_R = 5
-const MAX_R = 50
+const MAX_R = 300
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
 // Catalogues (⚠️ assure-toi que les slugs existent côté DB)
@@ -253,42 +253,13 @@ function SearchPageInner() {
             }
         }
 
-        const onLoad = () => {
+        const onLoad = async () => {
             m.resize()
-
-            const goTo = (lat: number, lng: number) => {
-                // évite de relancer fetch via moveend déclenché par easeTo
-                ignoreNextMoveRef.current = true
-                userMovedRef.current = false
-                m.easeTo({ center: [lng, lat], zoom: 12, duration: 600 })
-                fetchResults(lat, lng, radiusRef.current)
-                updateUrl(lat, lng, radiusRef.current)
-            }
-
-            if ('geolocation' in navigator) {
-                navigator.geolocation.getCurrentPosition(
-                    // ✅ succès → centre direct sur l’utilisateur
-                    (pos) => {
-                        const { latitude, longitude } = pos.coords
-                        goTo(latitude, longitude)
-                    },
-                    // ❌ refus / échec → fallback sur le centre courant
-                    () => {
-                        const c = m.getCenter()
-                        fetchResults(c.lat, c.lng, radiusRef.current)
-                        updateUrl(c.lat, c.lng, radiusRef.current)
-                    },
-                    { enableHighAccuracy: true, timeout: 7000, maximumAge: 180000 },
-                )
-            } else {
-                // vieux navigateur → fallback
-                const c = m.getCenter()
-                fetchResults(c.lat, c.lng, radiusRef.current)
-                updateUrl(c.lat, c.lng, radiusRef.current)
-            }
+            maybePlaceHome()
+            const c = m.getCenter()
+            await fetchResults(c.lat, c.lng, radiusRef.current)
+            updateUrl(c.lat, c.lng, radiusRef.current)
         }
-
-        m.on('load', onLoad)
 
         const onMoveEnd = () => {
             if (ignoreNextMoveRef.current) {
