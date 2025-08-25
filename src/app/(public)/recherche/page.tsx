@@ -253,13 +253,42 @@ function SearchPageInner() {
             }
         }
 
-        const onLoad = async () => {
+        const onLoad = () => {
             m.resize()
-            maybePlaceHome()
-            const c = m.getCenter()
-            await fetchResults(c.lat, c.lng, radiusRef.current)
-            updateUrl(c.lat, c.lng, radiusRef.current)
+
+            const goTo = (lat: number, lng: number) => {
+                // évite de relancer fetch via moveend déclenché par easeTo
+                ignoreNextMoveRef.current = true
+                userMovedRef.current = false
+                m.easeTo({ center: [lng, lat], zoom: 12, duration: 600 })
+                fetchResults(lat, lng, radiusRef.current)
+                updateUrl(lat, lng, radiusRef.current)
+            }
+
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    // ✅ succès → centre direct sur l’utilisateur
+                    (pos) => {
+                        const { latitude, longitude } = pos.coords
+                        goTo(latitude, longitude)
+                    },
+                    // ❌ refus / échec → fallback sur le centre courant
+                    () => {
+                        const c = m.getCenter()
+                        fetchResults(c.lat, c.lng, radiusRef.current)
+                        updateUrl(c.lat, c.lng, radiusRef.current)
+                    },
+                    { enableHighAccuracy: true, timeout: 7000, maximumAge: 180000 },
+                )
+            } else {
+                // vieux navigateur → fallback
+                const c = m.getCenter()
+                fetchResults(c.lat, c.lng, radiusRef.current)
+                updateUrl(c.lat, c.lng, radiusRef.current)
+            }
         }
+
+        m.on('load', onLoad)
 
         const onMoveEnd = () => {
             if (ignoreNextMoveRef.current) {
