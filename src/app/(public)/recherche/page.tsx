@@ -31,7 +31,7 @@ const SPECIALTIES = [
             { slug: 'apprentissage-outils-numeriques', label: "Apprentissage outils numériques" },
             { slug: 'troubles-autistiques', label: "Troubles autistiques" },
             { slug: 'psychomotricite-relationnelle', label: "Psychomotricité relationnelle" },
-        ]
+        ],
     },
     {
         slug: 'adulte',
@@ -42,7 +42,7 @@ const SPECIALTIES = [
             { slug: 'conseils-mobilite-adulte', label: "Conseils aide à la mobilité" },
             { slug: 'apprentissage-aides-techniques-adulte', label: "Apprentissage à l’utilisation des aides techniques" },
             { slug: 'apprentissage-transferts-adulte', label: "Apprentissage aux transferts" },
-        ]
+        ],
     },
     {
         slug: 'geriatrie',
@@ -54,9 +54,10 @@ const SPECIALTIES = [
             { slug: 'apprentissage-aides-techniques-geriatrie', label: "Apprentissage à l’utilisation des aides techniques" },
             { slug: 'apprentissage-transferts-geriatrie', label: "Apprentissage aux transferts" },
             { slug: 'accompagnement-demence', label: "Accompagnement démence" },
-        ]
-    }
+        ],
+    },
 ]
+
 const MODES = [
     { value: 'cabinet', label: 'Au cabinet' },
     { value: 'domicile', label: 'À domicile' },
@@ -398,6 +399,16 @@ function SearchPageInner() {
         [results],
     )
 
+    // Accordéons ouverts/fermés par catégorie
+    const [openCats, setOpenCats] = useState<Record<string, boolean>>({
+        pediatrie: false,
+        adulte: false,
+        geriatrie: false,
+    })
+    const toggleCat = (slug: string) =>
+        setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
+
+
     return (
         <main className="grid gap-6 md:grid-cols-[360px_1fr]">
             <section className="space-y-3">
@@ -427,31 +438,95 @@ function SearchPageInner() {
                     <div className="text-sm font-medium">Filtres</div>
                     <div className="space-y-2">
                         <div className="text-xs text-neutral-500">Spécialités</div>
-                        {SPECIALTIES.map((cat) => (
-                            <div key={cat.slug} className="space-y-1">
-                                <div className="font-medium">{cat.label}</div>
-                                <div className="flex flex-wrap gap-2 pl-4">
-                                    {cat.children.map((sub) => {
-                                        const checked = selectedSpecs.includes(sub.slug)
-                                        return (
-                                            <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={(e) =>
-                                                        setSelectedSpecs((prev) =>
-                                                            e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug)
+
+                        <div className="space-y-2">
+                            {SPECIALTIES.map((cat) => {
+                                const selectedInCat = cat.children.filter((sub) =>
+                                    selectedSpecs.includes(sub.slug),
+                                ).length
+
+                                return (
+                                    <div key={cat.slug} className="rounded-lg border">
+                                        {/* En-tête cliquable */}
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleCat(cat.slug)}
+                                            className="flex w-full items-center justify-between px-3 py-2"
+                                        >
+                                            <span className="font-medium">
+                                                {cat.label}
+                                                {selectedInCat > 0 && (
+                                                    <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                                                        {selectedInCat}
+                                                    </span>
+                                                )}
+                                            </span>
+                                            <span
+                                                className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''
+                                                    }`}
+                                                aria-hidden
+                                            >
+                                                ▶
+                                            </span>
+                                        </button>
+
+                                        {/* Contenu dépliable */}
+                                        <div
+                                            className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'
+                                                }`}
+                                        >
+                                            <div className="flex flex-wrap gap-2 px-3 pb-3">
+                                                {/* Bouton “Tout / Rien” */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const allSlugs = cat.children.map((c) => c.slug)
+                                                        const allSelected = allSlugs.every((s) =>
+                                                            selectedSpecs.includes(s),
                                                         )
-                                                    }
-                                                />
-                                                {sub.label}
-                                            </label>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        ))}
+                                                        setSelectedSpecs((prev) =>
+                                                            allSelected
+                                                                ? prev.filter((s) => !allSlugs.includes(s))
+                                                                : Array.from(new Set([...prev, ...allSlugs])),
+                                                        )
+                                                    }}
+                                                    className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
+                                                >
+                                                    {cat.children.every((s) => selectedSpecs.includes(s.slug))
+                                                        ? 'Tout désélectionner'
+                                                        : 'Tout sélectionner'}
+                                                </button>
+
+                                                {cat.children.map((sub) => {
+                                                    const checked = selectedSpecs.includes(sub.slug)
+                                                    return (
+                                                        <label
+                                                            key={sub.slug}
+                                                            className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm"
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={(e) =>
+                                                                    setSelectedSpecs((prev) =>
+                                                                        e.target.checked
+                                                                            ? [...prev, sub.slug]
+                                                                            : prev.filter((x) => x !== sub.slug),
+                                                                    )
+                                                                }
+                                                            />
+                                                            {sub.label}
+                                                        </label>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
                     </div>
+
 
                     <div className="space-y-2">
                         <div className="text-xs text-neutral-500">Modes</div>
