@@ -22,11 +22,40 @@ const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
 // Catalogues (⚠️ assure-toi que les slugs existent côté DB)
 const SPECIALTIES = [
-    { slug: 'neuro', label: 'Neuro' },
-    { slug: 'pediatrie', label: 'Pédiatrie' },
-    { slug: 'geriatrie', label: 'Gériatrie' },
-    { slug: 'main', label: 'Main' },
-    { slug: 'douleur', label: 'Douleur' },
+    {
+        slug: 'pediatrie',
+        label: 'Pédiatrie',
+        children: [
+            { slug: 'troubles-ecriture', label: "Troubles de l’écriture" },
+            { slug: 'troubles-calculs', label: "Troubles des calculs" },
+            { slug: 'apprentissage-outils-numeriques', label: "Apprentissage outils numériques" },
+            { slug: 'troubles-autistiques', label: "Troubles autistiques" },
+            { slug: 'psychomotricite-relationnelle', label: "Psychomotricité relationnelle" },
+        ]
+    },
+    {
+        slug: 'adulte',
+        label: 'Adulte',
+        children: [
+            { slug: 'reeducation-adulte', label: "Rééducation" },
+            { slug: 'conseils-amenagement-adulte', label: "Conseils en aménagement du domicile" },
+            { slug: 'conseils-mobilite-adulte', label: "Conseils aide à la mobilité" },
+            { slug: 'apprentissage-aides-techniques-adulte', label: "Apprentissage à l’utilisation des aides techniques" },
+            { slug: 'apprentissage-transferts-adulte', label: "Apprentissage aux transferts" },
+        ]
+    },
+    {
+        slug: 'geriatrie',
+        label: 'Gériatrie',
+        children: [
+            { slug: 'reeducation-geriatrie', label: "Rééducation" },
+            { slug: 'conseils-amenagement-geriatrie', label: "Conseils en aménagement du domicile" },
+            { slug: 'conseils-mobilite-geriatrie', label: "Conseils aide à la mobilité" },
+            { slug: 'apprentissage-aides-techniques-geriatrie', label: "Apprentissage à l’utilisation des aides techniques" },
+            { slug: 'apprentissage-transferts-geriatrie', label: "Apprentissage aux transferts" },
+            { slug: 'accompagnement-demence', label: "Accompagnement démence" },
+        ]
+    }
 ]
 const MODES = [
     { value: 'cabinet', label: 'Au cabinet' },
@@ -398,25 +427,30 @@ function SearchPageInner() {
                     <div className="text-sm font-medium">Filtres</div>
                     <div className="space-y-2">
                         <div className="text-xs text-neutral-500">Spécialités</div>
-                        <div className="flex flex-wrap gap-2">
-                            {SPECIALTIES.map((s) => {
-                                const checked = selectedSpecs.includes(s.slug)
-                                return (
-                                    <label key={s.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                                        <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onChange={(e) =>
-                                                setSelectedSpecs((prev) =>
-                                                    e.target.checked ? [...prev, s.slug] : prev.filter((x) => x !== s.slug),
-                                                )
-                                            }
-                                        />
-                                        {s.label}
-                                    </label>
-                                )
-                            })}
-                        </div>
+                        {SPECIALTIES.map((cat) => (
+                            <div key={cat.slug} className="space-y-1">
+                                <div className="font-medium">{cat.label}</div>
+                                <div className="flex flex-wrap gap-2 pl-4">
+                                    {cat.children.map((sub) => {
+                                        const checked = selectedSpecs.includes(sub.slug)
+                                        return (
+                                            <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={(e) =>
+                                                        setSelectedSpecs((prev) =>
+                                                            e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug)
+                                                        )
+                                                    }
+                                                />
+                                                {sub.label}
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        ))}
                     </div>
 
                     <div className="space-y-2">
