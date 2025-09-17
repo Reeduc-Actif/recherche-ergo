@@ -1,69 +1,35 @@
+// src/app/api/pro/onboard/route.ts
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
-
-// Sécurise avec un token Mapbox côté serveur (ne PAS utiliser la clé publique)
-// Vercel/Env: MAPBOX_TOKEN=pk.XXXXXXXX
-const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+import { supabaseServer } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+
 const Payload = z.object({
-    full_name: z.string().min(2),
+    full_name: z.string().min(1),
     headline: z.string().optional(),
     phone: z.string().optional(),
-    booking_url: z.string().url().optional().or(z.literal('')),
+    booking_url: z.string().url().optional(),
     languages: z.array(z.enum(['fr', 'nl', 'de', 'en'])).nonempty(),
     specialties: z.array(z.string()).nonempty(),
-    modes: z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([]),
-
     address: z.string().optional().default('Cabinet principal'),
     city: z.string().min(1),
-    postal_code: z.string().min(2),
+    postal_code: z.string().min(1),
     country: z.string().min(2).default('BE'),
+    modes: z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([]),
 
-    price_min: z.number().int().nonnegative().optional(),
-    price_max: z.number().int().nonnegative().optional(),
-    price_unit: z.enum(['hour', 'session']).optional(),
+    price_min: z.number().int().min(0).optional(),
+    price_max: z.number().int().min(0).optional(),
+    price_unit: z.enum(['seance', 'heure']).optional(), // 'séance' / 'heure'
 })
 
-type SupaCookies = {
-    get: (name: string) => string | undefined
-    set: (name: string, value: string, options: CookieOptions) => void
-    remove: (name: string, options: CookieOptions) => void
-}
-
-function createSupa(req: Request, res: NextResponse) {
-    return createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-            cookies: {
-                get(name: string) {
-                    const cookie = req.headers.get('cookie') ?? ''
-                    const m = cookie.match(new RegExp(`${name}=([^;]+)`))
-                    return m?.[1]
-                },
-                set(name: string, value: string, options: CookieOptions) {
-                    res.cookies.set(name, value, options)
-                },
-                remove(name: string, options: CookieOptions) {
-                    res.cookies.set(name, '', { ...options, maxAge: 0 })
-                },
-            } as SupaCookies
-        }
-    )
-}
-
-type MapboxFeature = {
-    center?: [number, number]
-}
-type MapboxGeocodeResponse = {
-    features?: MapboxFeature[]
-}
+type MapboxFeature = { center?: [number, number] }
+type MapboxGeocodeResponse = { features?: MapboxFeature[] }
 
 async function geocode(q: string): Promise<{ lon: number; lat: number }> {
-    if (!MAPBOX_TOKEN) throw new Error('MAPBOX_TOKEN manquant (env)')
+    if (!MAPBOX_TOKEN) throw new Error('MAPBOX_TOKEN manquant')
     const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`)
     url.searchParams.set('access_token', MAPBOX_TOKEN)
     url.searchParams.set('limit', '1')
@@ -79,65 +45,64 @@ async function geocode(q: string): Promise<{ lon: number; lat: number }> {
     return { lon, lat }
 }
 
-function slugify(s: string) {
-    return s
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '')
+function mkPriceHint(min?: number, max?: number, unit?: 'seance' | 'heure'): string | null {
+    if (!min && !max) return null
+    const core = min && max ? `${min}–${max} €` : `${min ?? max} €`
+    const u = unit === 'heure' ? '/h' : '/séance'
+    return `${core} ${u}`
 }
 
 export async function POST(req: Request) {
-    const res = NextResponse.json({ ok: true })
-    const supabase = createSupa(req, res)
-
-    // 1) Auth
-    const { data: { user }, error: uErr } = await supabase.auth.getUser()
-    if (uErr || !user) {
-        return NextResponse.json({ ok: false, error: 'Non authentifié.' }, { status: 401 })
-    }
-
-    // 2) Validate payload
-    const json = await req.json().catch(() => ({}))
-    const parsed = Payload.safeParse(json)
+    const body = await req.json().catch(() => ({}))
+    const parsed = Payload.safeParse(body)
     if (!parsed.success) {
-        return NextResponse.json({ ok: false, error: 'Payload invalide.' }, { status: 400 })
+        return NextResponse.json({ ok: false, error: 'Invalid payload' }, { status: 400 })
     }
     const input = parsed.data
 
-    // 3) Géocode (serveur)
-    const query = [input.address, input.postal_code, input.city, 'Belgique'].filter(Boolean).join(', ')
-    let lon: number | null = null
-    let lat: number | null = null
-    try {
-        const g = await geocode(query)
-        lon = g.lon; lat = g.lat
-    } catch (e) {
-        return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 400 })
+    const sb = await supabaseServer()
+
+    // 0) Auth obligatoire
+    const { data: userData, error: userErr } = await sb.auth.getUser()
+    if (userErr || !userData?.user) {
+        return NextResponse.json({ ok: false, error: 'Non authentifié' }, { status: 401 })
     }
+    const user = userData.user
 
-    // 4) S’assurer que profiles a bien la ligne (évite la violation de FK)
-    await supabase.from('profiles').upsert({
-        id: user.id,           // PK = auth.user().id
-        email: user.email ?? null,
-        updated_at: new Date().toISOString()
-    }, { onConflict: 'id', ignoreDuplicates: false })
+    // 1) Upsert profil (corrige ton FK)
+    //    Si la ligne n’existe pas dans public.profiles, on la crée.
+    await sb.from('profiles').upsert(
+        {
+            id: user.id,
+            email: user.email ?? null,
+            full_name: (user.user_metadata?.full_name as string | undefined) ?? null,
+            phone: (user.user_metadata?.phone as string | undefined) ?? null,
+        },
+        { onConflict: 'id' },
+    )
 
-    // 5) Créer le slug unique
-    const base = slugify(input.full_name)
-    let slug = base
-    for (let i = 0; i < 5; i++) {
-        const { data: exists } = await supabase.from('therapists').select('id').eq('slug', slug).maybeSingle()
-        if (!exists) break
+    // 2) Slug unique
+    const base = input.full_name
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
+    let slug = base || `ergo-${user.id.slice(0, 6)}`
+    for (let i = 0; i < 4; i++) {
+        const { data } = await sb.from('therapists').select('id').eq('slug', slug).maybeSingle()
+        if (!data) break
         slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
     }
 
-    // 6) Insert therapist (respecte la FK profile_id)
-    const { data: th, error: eTh } = await supabase
+    // 3) Géocodage (ville + CP + pays)
+    const q = [input.postal_code, input.city, input.country].filter(Boolean).join(' ')
+    const { lon, lat } = await geocode(q)
+
+    // 4) Insert therapist
+    const price_hint = mkPriceHint(input.price_min, input.price_max, input.price_unit)
+    const { data: th, error: e1 } = await sb
         .from('therapists')
         .insert({
             slug,
-            profile_id: user.id,                   // FK OK car profiles upsert avant
+            profile_id: user.id, // <- FK vers profiles.id (corrigé car on a upsert le profil)
             full_name: input.full_name,
             headline: input.headline || null,
             bio: null,
@@ -145,49 +110,43 @@ export async function POST(req: Request) {
             phone: input.phone || null,
             website: null,
             booking_url: input.booking_url || null,
-            price_hint: null,                      // conservé si tu l’utilises ailleurs
-            price_min: input.price_min ?? null,
-            price_max: input.price_max ?? null,
-            price_unit: input.price_unit ?? null,
+            price_hint: price_hint,
             is_published: true,
             is_approved: true,
-            created_at: new Date().toISOString(),
         })
         .select('id')
         .single()
 
-    if (eTh) {
-        return NextResponse.json({ ok: false, error: eTh.message }, { status: 400 })
+    if (e1) {
+        return NextResponse.json({ ok: false, error: e1.message }, { status: 400 })
     }
     const therapist_id = th!.id as string
 
-    // 7) langues
+    // 5) langues
     if (input.languages?.length) {
-        const rows = input.languages.map(code => ({ therapist_id, language_code: code }))
-        const { error: eLang } = await supabase.from('therapist_languages').insert(rows)
-        if (eLang) return NextResponse.json({ ok: false, error: eLang.message }, { status: 400 })
+        const rows = input.languages.map((code) => ({ therapist_id, language_code: code }))
+        const { error } = await sb.from('therapist_languages').insert(rows)
+        if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 })
     }
 
-    // 8) spécialités
+    // 6) spécialités
     if (input.specialties?.length) {
-        const rows = input.specialties.map(slug => ({ therapist_id, specialty_slug: slug }))
-        const { error: eSpec } = await supabase.from('therapist_specialties').insert(rows)
-        if (eSpec) return NextResponse.json({ ok: false, error: eSpec.message }, { status: 400 })
+        const rows = input.specialties.map((slug) => ({ therapist_id, specialty_slug: slug }))
+        const { error } = await sb.from('therapist_specialties').insert(rows)
+        if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 })
     }
 
-    // 9) localisation (coords via lon/lat serveur; lon/lat peuvent alimenter colonnes STORED)
-    const { error: eLoc } = await supabase.from('therapist_locations').insert({
+    // 7) localisation : on insère la géométrie via WKT SRID=4326;POINT(lon lat)
+    const { error: e4 } = await sb.from('therapist_locations').insert({
         therapist_id,
         address: input.address || 'Cabinet principal',
         city: input.city,
         postal_code: input.postal_code,
-        country: input.country || 'BE',
+        country: input.country,
         modes: input.modes ?? [],
-        coords: null,            // si tu utilises une colonne geography + triggers, laisse-la gérée côté DB
-        lon,                     // colonnes STORED lat/lon présentes dans ta table → OK
-        lat,
+        coords: `SRID=4326;POINT(${lon} ${lat})`,
     })
-    if (eLoc) return NextResponse.json({ ok: false, error: eLoc.message }, { status: 400 })
+    if (e4) return NextResponse.json({ ok: false, error: e4.message }, { status: 400 })
 
-    return res
+    return NextResponse.json({ ok: true, therapist_id })
 }
