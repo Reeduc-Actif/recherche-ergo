@@ -1,51 +1,63 @@
+import { redirect } from 'next/navigation'
 import { supabaseServer } from '@/lib/supabase'
+import EditBasics, { TherapistBasics } from '@/components/ui/edit-basics'
 import OnboardForm from '@/components/ui/onboard-form'
-import EditBasics from '@/components/ui/edit-basics'
 
-export default async function MyProfile() {
+export default async function ProProfilePage() {
     const supabase = await supabaseServer()
     const { data: { user } } = await supabase.auth.getUser()
+    if (!user) redirect('/pro/connexion')
 
-    if (!user) {
-        return (
-            <main className="mx-auto max-w-xl">
-                <h1 className="mb-2 text-2xl font-semibold">Mon profil</h1>
-                <p className="text-neutral-700">Vous devez être connecté.</p>
-                <p className="text-sm text-neutral-600 mt-2">
-                    <a className="underline" href="/pro/inscription">Créer un compte</a>
-                    {' '}ou vérifiez votre e-mail de confirmation si vous venez de vous inscrire.
-                </p>
-            </main>
-        )
-    }
-
-    // Est-ce que ce user a déjà un therapist ?
-    const { data: therapist } = await supabase
+    // On tente de charger le therapist lié au compte
+    const { data: th } = await supabase
         .from('therapists')
-        .select('id, slug, full_name, headline, email, phone, booking_url, is_published, is_approved')
+        .select('id, full_name, headline, phone, booking_url, is_published')
         .eq('profile_id', user.id)
-        .maybeSingle()
+        .maybeSingle<TherapistBasics>()
 
-    // Onboarding si pas encore créé
-    if (!therapist) {
-        return (
-            <main className="mx-auto max-w-3xl space-y-6">
-                <h1 className="text-2xl font-semibold">Compléter mon profil</h1>
-                <OnboardForm userId={user.id} userEmail={user.email ?? ''} />
-            </main>
-        )
-    }
-
-    // Sinon, édition basique
     return (
-        <main className="mx-auto max-w-3xl space-y-8">
-            <header className="space-y-1">
-                <h1 className="text-2xl font-semibold">Mon profil</h1>
-                <p className="text-neutral-600">Statut : {therapist.is_published ? 'Publié' : 'Privé'} {therapist.is_approved ? '(validé)' : '(en attente)'}</p>
-                <p className="text-sm text-neutral-600">Lien public : <a className="underline" href={`/ergo/${therapist.slug}`} target="_blank">/ergo/{therapist.slug}</a></p>
-            </header>
+        <main className="mx-auto max-w-3xl space-y-6">
+            <h1 className="text-2xl font-semibold">Mon profil</h1>
 
-            <EditBasics therapist={therapist} />
+            {!th ? (
+                <>
+                    <p className="text-sm text-neutral-600">
+                        Bienvenue ! Complétez ces informations pour créer votre fiche visible sur la recherche.
+                    </p>
+                    <OnboardForm userId={user.id} userEmail={user.email ?? ''} />
+                </>
+            ) : (
+                <>
+                    <EditBasics therapist={th} />
+                    <form action="/pro/connexion" className="rounded-2xl border p-4">
+                        {/* Bouton de déconnexion client-side */}
+                        <LogoutButton />
+                    </form>
+                </>
+            )}
         </main>
+    )
+}
+
+// Petit bouton client pour se déconnecter proprement
+'use client'
+import { supabaseBrowser } from '@/lib/supabase-browser'
+import { useRouter } from 'next/navigation'
+
+function LogoutButton() {
+    const sb = supabaseBrowser()
+    const router = useRouter()
+    return (
+        <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+                await sb.auth.signOut()
+                router.replace('/pro/connexion')
+                router.refresh()
+            }}
+        >
+            Se déconnecter
+        </button>
     )
 }
