@@ -119,7 +119,7 @@ export default function Home() {
               et prochainement des outils pour <strong>l’aménagement du domicile</strong> des personnes à mobilité réduite.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Link href="/pro">
+              <Link href="/pro/inscription">
                 <Button>
                   <Stethoscope className="mr-2 h-4 w-4" />
                   Créer mon profil ergo
