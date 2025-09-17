@@ -33,8 +33,8 @@ export default function Home() {
             <p className="max-w-prose text-pretty text-neutral-700">
               ErgoConnect vous aide à <strong>localiser</strong> un professionnel,
               filtrer par <strong>spécialités</strong>,
-              par <strong>langues</strong> et par <strong>modalités</strong>. <br>Plus qu'à
-                <strong> prendre rendez-vous</strong> en ligne.</br>
+              par <strong>langues</strong> et par <strong>modalités</strong>. Puis à
+              <strong> prendre rendez-vous</strong> en ligne.
             </p>
 
             <div className="flex flex-wrap gap-3">
