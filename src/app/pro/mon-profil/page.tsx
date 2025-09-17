@@ -1,37 +1,46 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { supabaseServer } from '@/lib/supabase'
-import EditBasics, { TherapistBasics } from '@/components/ui/edit-basics'
 import OnboardForm from '@/components/ui/onboard-form'
-import LogoutButton from '@/components/auth/logout-button' // <— importer le composant client
+import EditBasics from '@/components/ui/edit-basics'
+
+export const dynamic = 'force-dynamic'
 
 export default async function ProProfilePage() {
-    const supabase = await supabaseServer()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) redirect('/pro/connexion')
+    const sb = await supabaseServer()
+    const { data: { user } } = await sb.auth.getUser()
 
-    const { data: th } = await supabase
+    if (!user) {
+        redirect('/pro/connexion')
+    }
+
+    // Récupère (ou pas) le thérapeute lié à ce compte
+    const { data: therapist } = await sb
         .from('therapists')
-        .select('id, full_name, headline, phone, booking_url, is_published')
+        .select('id, slug, full_name, headline, phone, booking_url, is_published')
         .eq('profile_id', user.id)
-        .maybeSingle<TherapistBasics>()
+        .maybeSingle()
 
     return (
         <main className="mx-auto max-w-3xl space-y-6">
-            <h1 className="text-2xl font-semibold">Mon profil</h1>
+            <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-semibold">Mon profil</h1>
+                {therapist?.slug && (
+                    <Link href={`/ergo/${therapist.slug}`} className="btn">Voir ma fiche publique</Link>
+                )}
+            </div>
 
-            {!th ? (
+            {!therapist ? (
                 <>
-                    <p className="text-sm text-neutral-600">
-                        Bienvenue ! Complétez ces informations pour créer votre fiche visible sur la recherche.
+                    <p className="text-sm text-neutral-700">
+                        Bienvenue ! Complétez ces informations pour créer votre fiche visible dans la recherche.
                     </p>
-                    <OnboardForm userId={user.id} userEmail={user.email ?? ''} />
+                    {/* ⬇️ Plus de props ici */}
+                    <OnboardForm />
                 </>
             ) : (
                 <>
-                    <EditBasics therapist={th} />
-                    <section className="rounded-2xl border p-4">
-                        <LogoutButton />
-                    </section>
+                    <EditBasics therapist={therapist} />
                 </>
             )}
         </main>
