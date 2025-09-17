@@ -74,7 +74,7 @@ export default function Home() {
               <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-neutral-50">
                 {/* Remplace éventuellement par une capture de ta carte */}
                 <Image
-                  src="/hero-map.png"
+                  src="/images/hero-map.png"
                   alt="Aperçu de la recherche sur carte"
                   width={960}
                   height={720}

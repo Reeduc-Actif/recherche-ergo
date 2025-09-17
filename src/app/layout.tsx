@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <footer className="mt-16 border-t">
           <div className="container py-8 text-sm text-neutral-600">
             <div className="flex flex-col items-start justify-between gap-4 md:flex-row">
-              <p>© {new Date().getFullYear()} ErgoConnect — Rééduc’Actif</p>
+              <p>© {new Date().getFullYear()} ErgoConnect — Tous droits réservés</p>
               <div className="flex gap-4">
                 <Link href="/mentions-legales" className="hover:underline">Mentions légales</Link>
                 <Link href="/confidentialite" className="hover:underline">Confidentialité</Link>
