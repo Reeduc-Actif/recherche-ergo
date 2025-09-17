@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import type { SupabaseClient } from '@supabase/supabase-js'
 
 const LANGS = [
     { value: 'fr', label: 'Français' },
@@ -20,12 +19,12 @@ const MODES = [
 type Props = { userId: string; userEmail: string }
 
 export default function OnboardForm({ userId, userEmail }: Props) {
+    // On continue à charger dynamiquement les spécialités
     const sb = supabaseBrowser()
     const [loading, setLoading] = useState(false)
     const [ok, setOk] = useState<string | null>(null)
     const [err, setErr] = useState<string | null>(null)
 
-    // spécialités dynamiques
     const [specs, setSpecs] = useState<{ slug: string; label: string; parent_slug: string | null }[]>([])
     useEffect(() => {
         sb.from('specialties').select('slug,label,parent_slug').then(({ data }) => setSpecs(data ?? []))
@@ -44,106 +43,74 @@ export default function OnboardForm({ userId, userEmail }: Props) {
         headline: '',
         phone: '',
         booking_url: '',
+
         languages: [] as string[],
         specialties: [] as string[],
-        lat: '',
-        lng: '',
         modes: [] as string[],
+
+        address: 'Cabinet principal',
+        city: '',
+        postal_code: '',
+        country: 'BE',
+
+        price_min: '',
+        price_max: '',
+        price_unit: 'hour' as 'hour' | 'session',
     })
 
     const toggle = (key: 'languages' | 'specialties' | 'modes', value: string) =>
         setForm(v => ({
             ...v,
-            [key]: (v[key as keyof typeof v] as string[]).includes(value)
+            [key]: v[key as keyof typeof v].includes(value)
                 ? (v[key as keyof typeof v] as string[]).filter(x => x !== value)
-                : [...(v[key as keyof typeof v] as string[]), value]
+                : [...(v[key as keyof typeof v] as string[]), value],
         }))
-
-    const geoHere = () => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(pos => {
-            setForm(v => ({ ...v, lat: String(pos.coords.latitude), lng: String(pos.coords.longitude) }))
-        })
-    }
 
     const onSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setOk(null); setErr(null)
-        if (!form.full_name) { setErr('Nom complet requis.'); return }
-        if (!form.languages.length) { setErr('Sélectionnez au moins une langue.'); return }
-        if (!form.specialties.length) { setErr('Sélectionnez au moins une spécialité.'); return }
-        if (!form.lat || !form.lng) { setErr('Position requise (lat/lng).'); return }
+
+        if (!form.full_name) return setErr('Nom complet requis.')
+        if (!form.languages.length) return setErr('Sélectionnez au moins une langue.')
+        if (!form.specialties.length) return setErr('Sélectionnez au moins une spécialité.')
+        if (!form.city || !form.postal_code) return setErr('Ville et code postal requis.')
 
         setLoading(true)
         try {
-            // 1) therapist
-            const slugBase = slugify(form.full_name)
-            const slug = await makeUniqueSlug(sb, slugBase)
-
-            const { data: th, error: e1 } = await sb
-                .from('therapists')
-                .insert({
-                    slug,
-                    profile_id: userId,
-                    full_name: form.full_name,
-                    headline: form.headline || null,
-                    bio: null,
-                    email: userEmail,
-                    phone: form.phone || null,
-                    website: null,
-                    booking_url: form.booking_url || null,
-                    price_hint: null,
-                    is_published: true,
-                    is_approved: true,
-                })
-                .select('id')
-                .single()
-
-            if (e1) throw e1
-            const therapist_id = (th as { id: string }).id
-
-            // 2) langues
-            if (form.languages.length) {
-                const rows = form.languages.map(code => ({ therapist_id, language_code: code }))
-                const { error: e2 } = await sb.from('therapist_languages').insert(rows)
-                if (e2) throw e2
+            const payload = {
+                full_name: form.full_name,
+                headline: form.headline || undefined,
+                phone: form.phone || undefined,
+                booking_url: form.booking_url || undefined,
+                languages: form.languages,
+                specialties: form.specialties,
+                modes: form.modes,
+                address: form.address || undefined,
+                city: form.city,
+                postal_code: form.postal_code,
+                country: form.country || 'BE',
+                price_min: form.price_min ? Number(form.price_min) : undefined,
+                price_max: form.price_max ? Number(form.price_max) : undefined,
+                price_unit: form.price_unit,
             }
 
-            // 3) spécialités
-            if (form.specialties.length) {
-                const rows = form.specialties.map(slug => ({ therapist_id, specialty_slug: slug }))
-                const { error: e3 } = await sb.from('therapist_specialties').insert(rows)
-                if (e3) throw e3
-            }
-
-            // 4) localisation
-            const lat = Number(form.lat), lng = Number(form.lng)
-            const { error: e4 } = await sb.from('therapist_locations').insert({
-                therapist_id,
-                address: 'Cabinet principal',
-                city: null,
-                postal_code: null,
-                country: 'BE',
-                modes: form.modes,   // plus de "as any"
-                coords: null,
-                lon: lng,
-                lat: lat,
+            const r = await fetch('/api/pro/onboard', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload),
             })
-            if (e4) throw e4
+            const j = await r.json()
+            if (!r.ok || !j.ok) throw new Error(j.error || 'Échec de création')
 
             setOk('Profil créé ! Il est maintenant visible dans la recherche.')
             setForm({
                 full_name: '', headline: '', phone: '', booking_url: '',
-                languages: [], specialties: [], lat: '', lng: '', modes: []
+                languages: [], specialties: [], modes: [],
+                address: 'Cabinet principal', city: '', postal_code: '', country: 'BE',
+                price_min: '', price_max: '', price_unit: 'hour',
             })
-        } catch (e: unknown) {
-            const msg =
-                e instanceof Error
-                    ? e.message
-                    : (typeof e === 'object' && e !== null && 'message' in e
-                        ? String((e as { message?: unknown }).message)
-                        : 'Erreur inconnue')
-            setErr(msg)
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Erreur inconnue')
         } finally {
             setLoading(false)
         }
@@ -151,6 +118,8 @@ export default function OnboardForm({ userId, userEmail }: Props) {
 
     return (
         <form onSubmit={onSubmit} className="space-y-6 rounded-2xl border p-4">
+            <h2 className="text-lg font-medium">Créer ma fiche publique</h2>
+
             <div className="grid gap-3 md:grid-cols-2">
                 <div>
                     <label className="mb-1 block text-sm">Nom complet</label>
@@ -158,7 +127,7 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                 </div>
                 <div>
                     <label className="mb-1 block text-sm">Titre / headline</label>
-                    <input className="input" placeholder="Pédiatrie, troubles DYS…" value={form.headline} onChange={e => setForm(v => ({ ...v, headline: e.target.value }))} />
+                    <input className="input" placeholder="Pédiatrie, TND, aménagement…" value={form.headline} onChange={e => setForm(v => ({ ...v, headline: e.target.value }))} />
                 </div>
             </div>
 
@@ -170,6 +139,39 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                 <div className="md:col-span-2">
                     <label className="mb-1 block text-sm">Lien de prise de RDV</label>
                     <input className="input" placeholder="https://cal.com/..." value={form.booking_url} onChange={e => setForm(v => ({ ...v, booking_url: e.target.value }))} />
+                </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                    <label className="mb-1 block text-sm">Adresse</label>
+                    <input className="input" value={form.address} onChange={e => setForm(v => ({ ...v, address: e.target.value }))} />
+                </div>
+                <div>
+                    <label className="mb-1 block text-sm">Ville</label>
+                    <input className="input" value={form.city} onChange={e => setForm(v => ({ ...v, city: e.target.value }))} />
+                </div>
+                <div>
+                    <label className="mb-1 block text-sm">Code postal</label>
+                    <input className="input" value={form.postal_code} onChange={e => setForm(v => ({ ...v, postal_code: e.target.value }))} />
+                </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                    <label className="mb-1 block text-sm">Tarif min (€)</label>
+                    <input inputMode="numeric" className="input" value={form.price_min} onChange={e => setForm(v => ({ ...v, price_min: e.target.value }))} />
+                </div>
+                <div>
+                    <label className="mb-1 block text-sm">Tarif max (€)</label>
+                    <input inputMode="numeric" className="input" value={form.price_max} onChange={e => setForm(v => ({ ...v, price_max: e.target.value }))} />
+                </div>
+                <div>
+                    <label className="mb-1 block text-sm">Unité</label>
+                    <select className="input" value={form.price_unit} onChange={e => setForm(v => ({ ...v, price_unit: e.target.value as 'hour' | 'session' }))}>
+                        <option value="hour">€/heure</option>
+                        <option value="session">€/séance</option>
+                    </select>
                 </div>
             </div>
 
@@ -185,8 +187,8 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                 </div>
             </div>
 
-            <div className="space-y-2">
-                <div className="text-sm">Spécialités</div>
+            <div>
+                <div className="mb-1 text-sm">Spécialités</div>
                 <div className="space-y-3">
                     {roots.map(root => (
                         <div key={root.slug} className="rounded-lg border p-3">
@@ -202,18 +204,6 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                         </div>
                     ))}
                 </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                <div>
-                    <label className="mb-1 block text-sm">Latitude</label>
-                    <input className="input" value={form.lat} onChange={e => setForm(v => ({ ...v, lat: e.target.value }))} />
-                </div>
-                <div>
-                    <label className="mb-1 block text-sm">Longitude</label>
-                    <input className="input" value={form.lng} onChange={e => setForm(v => ({ ...v, lng: e.target.value }))} />
-                </div>
-                <button type="button" className="btn mt-6" onClick={geoHere}>📍 Ma position</button>
             </div>
 
             <div>
@@ -233,22 +223,4 @@ export default function OnboardForm({ userId, userEmail }: Props) {
             {err && <p className="text-sm text-red-700">{err}</p>}
         </form>
     )
-}
-
-function slugify(s: string) {
-    return s
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '')
-}
-
-async function makeUniqueSlug(sb: SupabaseClient, base: string) {
-    let candidate = base
-    for (let i = 0; i < 5; i++) {
-        const { data } = await sb.from('therapists').select('id').eq('slug', candidate).maybeSingle()
-        if (!data) return candidate
-        candidate = `${base}-${Math.random().toString(36).slice(2, 6)}`
-    }
-    return candidate
 }
