@@ -27,13 +27,13 @@ export default function Home() {
             </div>
 
             <h1 className="text-balance text-4xl font-semibold tracking-tight md:text-5xl">
-              Trouvez un <span className="underline decoration-2 underline-offset-4">ergothérapeute</span> en 2 clics
+              Trouvez Un Ergothérapeute En 2 Clics
             </h1>
 
             <p className="max-w-prose text-pretty text-neutral-700">
               ErgoConnect vous aide à <strong>localiser</strong> un professionnel,
-              filtrer par <strong>spécialités</strong> (pédiatrie, adulte, gériatrie),
-              par <strong>langues</strong> et par <strong>modalités</strong> (cabinet, domicile, visio) — puis à
+              filtrer par <strong>spécialités</strong>,
+              par <strong>langues</strong> et par <strong>modalités</strong>. Puis à
               <strong> prendre rendez-vous</strong> en ligne.
             </p>
 
@@ -116,8 +116,7 @@ export default function Home() {
             <h2 className="text-2xl font-semibold">ErgoConnect Pro — Aménagement du domicile</h2>
             <p className="text-neutral-700">
               Un espace dédié aux professionnels : gestion de profils, validation des diplômes,
-              et prochainement des outils pour <strong>l’aménagement du domicile</strong> des personnes à mobilité réduite
-              (formulaires simples, rapports Word, suivi client & entrepreneur).
+              et prochainement des outils pour <strong>l’aménagement du domicile</strong> des personnes à mobilité réduite.
             </p>
             <div className="flex flex-wrap gap-3">
               <Link href="/pro">
