@@ -2,20 +2,24 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-export const runtime = 'nodejs'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Validation du payload (défauts sûrs)
+// --- Validation du payload (défauts sûrs + compat UI) ---
 const Payload = z.object({
     lat: z.number().finite().optional(),
     lng: z.number().finite().optional(),
-    radius_km: z.number().int().min(1).max(200).default(25),
+    radius_km: z.number().int().min(1).max(300).default(25), // UI va jusqu'à 300
     specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
     modes_filter: z.array(z.string().min(1)).nonempty().optional(),
+    languages_filter: z.array(z.string().min(1)).nonempty().optional(), // fr|nl|de|en
 })
 
-// Typage du retour de la RPC
+// Codes langues autorisés
+const ALLOWED_LANGS = new Set(['fr', 'nl', 'de', 'en'])
+
+// --- Typage du retour de la RPC ---
 type RpcRow = {
     therapist_id: string
     slug: string
@@ -29,7 +33,8 @@ type RpcRow = {
     modes: string[] | null
     distance_m: number | null
     lon: number | null
-    lat_out: number | null
+    lat: number | null
+    languages: string[] | null
 }
 
 type Result = {
@@ -46,6 +51,7 @@ type Result = {
     distance_m: number | null
     lon: number | null
     lat: number | null
+    languages: string[] | null
 }
 
 export async function POST(req: Request) {
@@ -59,21 +65,39 @@ export async function POST(req: Request) {
         )
     }
 
-    const { lat, lng, radius_km, specialties_filter, modes_filter } = parsed.data
+    const {
+        lat,
+        lng,
+        radius_km,
+        specialties_filter,
+        modes_filter,
+        languages_filter,
+    } = parsed.data
+
+    // Normalisation des langues: toLowerCase + filtrage sur codes permis
+    const langsNorm =
+        Array.isArray(languages_filter)
+            ? languages_filter
+                .map((v) => String(v).toLowerCase())
+                .filter((v) => ALLOWED_LANGS.has(v))
+            : null
+
     const supabase = await supabaseServer()
 
-    const { data: rpcData, error } = await supabase.rpc('search_therapists_v1', {
-        lat: lat ?? null,
-        lng: lng ?? null,
-        radius_km,
-        specialties_filter: specialties_filter ?? null,
-        modes_filter: modes_filter ?? null,
+    // Appel de la RPC (voir fonction SQL `search_therapists` proposée)
+    const { data: rpcData, error } = await supabase.rpc('search_therapists', {
+        in_lat: lat ?? null,
+        in_lng: lng ?? null,
+        in_radius_km: radius_km,
+        in_specialties: specialties_filter?.length ? specialties_filter : null,
+        in_modes: modes_filter?.length ? modes_filter : null,
+        in_languages: langsNorm && langsNorm.length ? langsNorm : null,
     })
 
     if (error) {
-        console.error('[RPC search_therapists]', error) // indispensable
+        console.error('[RPC search_therapists]', error)
         return NextResponse.json(
-            { ok: false, error: error.message, results: [] },
+            { ok: false, error: error.message, results: [] as Result[] },
             { status: 500 },
         )
     }
@@ -93,7 +117,8 @@ export async function POST(req: Request) {
         modes: r.modes,
         distance_m: r.distance_m,
         lon: r.lon,
-        lat: r.lat_out,
+        lat: r.lat,
+        languages: r.languages ?? null,
     }))
 
     return NextResponse.json({ ok: true, results })
