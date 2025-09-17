@@ -4,7 +4,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 
 // Sécurise avec un token Mapbox côté serveur (ne PAS utiliser la clé publique)
 // Vercel/Env: MAPBOX_TOKEN=pk.XXXXXXXX
-const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
 export const dynamic = 'force-dynamic'
 
