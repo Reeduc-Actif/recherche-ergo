@@ -55,7 +55,14 @@ function createSupa(req: Request, res: NextResponse) {
     )
 }
 
-async function geocode(q: string) {
+type MapboxFeature = {
+    center?: [number, number]
+}
+type MapboxGeocodeResponse = {
+    features?: MapboxFeature[]
+}
+
+async function geocode(q: string): Promise<{ lon: number; lat: number }> {
     if (!MAPBOX_TOKEN) throw new Error('MAPBOX_TOKEN manquant (env)')
     const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`)
     url.searchParams.set('access_token', MAPBOX_TOKEN)
@@ -65,11 +72,11 @@ async function geocode(q: string) {
 
     const r = await fetch(url.toString(), { cache: 'no-store' })
     if (!r.ok) throw new Error('Erreur géocodage')
-    const j = await r.json() as any
+    const j: MapboxGeocodeResponse = await r.json()
     const feat = j.features?.[0]
-    if (!feat?.center?.length) throw new Error('Adresse introuvable')
+    if (!feat?.center || feat.center.length < 2) throw new Error('Adresse introuvable')
     const [lon, lat] = feat.center
-    return { lon: Number(lon), lat: Number(lat) }
+    return { lon, lat }
 }
 
 function slugify(s: string) {

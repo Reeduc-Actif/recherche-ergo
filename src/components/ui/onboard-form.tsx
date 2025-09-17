@@ -18,7 +18,7 @@ const MODES = [
 
 type Props = { userId: string; userEmail: string }
 
-export default function OnboardForm({ userId, userEmail }: Props) {
+export default function OnboardForm({ userId: _userId, userEmail: _userEmail }: Props) {
     // On continue à charger dynamiquement les spécialités
     const sb = supabaseBrowser()
     const [loading, setLoading] = useState(false)
