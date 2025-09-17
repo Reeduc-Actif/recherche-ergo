@@ -8,7 +8,6 @@ import { supabaseBrowser } from '@/lib/supabase-browser'
 
 export default function ProLoginPage() {
     const sb = supabaseBrowser()
-    const router = useRouter()
 
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
