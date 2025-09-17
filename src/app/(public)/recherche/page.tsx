@@ -20,40 +20,40 @@ const MIN_R = 5
 const MAX_R = 300
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
-// Catalogues (⚠️ assure-toi que les slugs existent côté DB)
+// Hiérarchie des spécialités — slugs alignés avec la DB
 const SPECIALTIES = [
     {
         slug: 'pediatrie',
         label: 'Pédiatrie',
         children: [
             { slug: 'troubles-ecriture', label: "Troubles de l’écriture" },
-            { slug: 'troubles-calculs', label: "Troubles des calculs" },
-            { slug: 'apprentissage-outils-numeriques', label: "Apprentissage outils numériques" },
-            { slug: 'troubles-autistiques', label: "Troubles autistiques" },
-            { slug: 'psychomotricite-relationnelle', label: "Psychomotricité relationnelle" },
+            { slug: 'troubles-calculs', label: 'Troubles des calculs' },
+            { slug: 'apprentissage-outils-numeriques', label: 'Apprentissage outils numériques' },
+            { slug: 'troubles-autistiques', label: 'Troubles autistiques' },
+            { slug: 'psychomotricite-relationnelle', label: 'Psychomotricité relationnelle' },
         ],
     },
     {
         slug: 'adulte',
         label: 'Adulte',
         children: [
-            { slug: 'reeducation-adulte', label: "Rééducation" },
-            { slug: 'conseils-amenagement-adulte', label: "Conseils en aménagement du domicile" },
-            { slug: 'conseils-mobilite-adulte', label: "Conseils aide à la mobilité" },
-            { slug: 'apprentissage-aides-techniques-adulte', label: "Apprentissage à l’utilisation des aides techniques" },
-            { slug: 'apprentissage-transferts-adulte', label: "Apprentissage aux transferts" },
+            { slug: 'reeducation-adulte', label: 'Rééducation' },
+            { slug: 'conseils-amenagement-domicile-adulte', label: 'Conseils en aménagement du domicile' },
+            { slug: 'conseils-aide-mobilite-adulte', label: 'Conseils aide à la mobilité' },
+            { slug: 'apprentissage-aides-techniques-adulte', label: 'Apprentissage à l’utilisation des aides techniques' },
+            { slug: 'apprentissage-transferts-adulte', label: 'Apprentissage aux transferts' },
         ],
     },
     {
         slug: 'geriatrie',
         label: 'Gériatrie',
         children: [
-            { slug: 'reeducation-geriatrie', label: "Rééducation" },
-            { slug: 'conseils-amenagement-geriatrie', label: "Conseils en aménagement du domicile" },
-            { slug: 'conseils-mobilite-geriatrie', label: "Conseils aide à la mobilité" },
-            { slug: 'apprentissage-aides-techniques-geriatrie', label: "Apprentissage à l’utilisation des aides techniques" },
-            { slug: 'apprentissage-transferts-geriatrie', label: "Apprentissage aux transferts" },
-            { slug: 'accompagnement-demence', label: "Accompagnement démence" },
+            { slug: 'reeducation-geriatrie', label: 'Rééducation' },
+            { slug: 'conseils-amenagement-domicile-geriatrie', label: 'Conseils en aménagement du domicile' },
+            { slug: 'conseils-aide-mobilite-geriatrie', label: 'Conseils aide à la mobilité' },
+            { slug: 'apprentissage-aides-techniques-geriatrie', label: 'Apprentissage à l’utilisation des aides techniques' },
+            { slug: 'apprentissage-transferts-geriatrie', label: 'Apprentissage aux transferts' },
+            { slug: 'accompagnement-demence', label: 'Accompagnement démence' },
         ],
     },
 ]
@@ -62,6 +62,13 @@ const MODES = [
     { value: 'cabinet', label: 'Au cabinet' },
     { value: 'domicile', label: 'À domicile' },
     { value: 'visio', label: 'En visio' },
+]
+
+const LANGUAGES = [
+    { value: 'fr', label: 'Français' },
+    { value: 'nl', label: 'Néerlandais' },
+    { value: 'de', label: 'Allemand' },
+    { value: 'en', label: 'Anglais' },
 ]
 
 type Result = {
@@ -78,6 +85,7 @@ type Result = {
     distance_m: number | null
     lon?: number | null
     lat?: number | null
+    languages?: string[] | null
 }
 
 type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
@@ -125,6 +133,10 @@ function SearchPageInner() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
+    const urlLangs = (searchParams.get('langs') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
 
     // Centre initial en ref (pas de rerun de l’effet d’init)
     const initialCenterRef = useRef<[number, number]>(
@@ -135,14 +147,32 @@ function SearchPageInner() {
         Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
     )
     const radiusRef = useRef(radiusKm)
-    useEffect(() => { radiusRef.current = radiusKm }, [radiusKm])
+    useEffect(() => {
+        radiusRef.current = radiusKm
+    }, [radiusKm])
 
+    const [selectedLangs, setSelectedLangs] = useState<string[]>(urlLangs)
     const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
     const [selectedModes, setSelectedModes] = useState<string[]>(urlModes)
 
+    // Accordéons ouverts/fermés par catégorie
+    const [openCats, setOpenCats] = useState<Record<string, boolean>>({
+        pediatrie: false,
+        adulte: false,
+        geriatrie: false,
+    })
+    const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
+
     // Helpers URL
     const updateUrl = useCallback(
-        (lat: number, lng: number, r: number, specs = selectedSpecs, modes = selectedModes) => {
+        (
+            lat: number,
+            lng: number,
+            r: number,
+            specs = selectedSpecs,
+            modes = selectedModes,
+            langs = selectedLangs,
+        ) => {
             const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
             sp.set('lat', lat.toFixed(6))
             sp.set('lng', lng.toFixed(6))
@@ -151,14 +181,23 @@ function SearchPageInner() {
             else sp.delete('spec')
             if (modes.length) sp.set('modes', modes.join(','))
             else sp.delete('modes')
+            if (langs.length) sp.set('langs', langs.join(','))
+            else sp.delete('langs')
             router.replace(`${pathname}?${sp.toString()}`)
         },
-        [pathname, router, selectedModes, selectedSpecs],
+        [pathname, router, selectedModes, selectedSpecs, selectedLangs],
     )
 
     // Fetch résultats
     const fetchResults = useCallback(
-        async (lat?: number, lng?: number, r: number = radiusRef.current, specs = selectedSpecs, modes = selectedModes) => {
+        async (
+            lat?: number,
+            lng?: number,
+            r: number = radiusRef.current,
+            specs = selectedSpecs,
+            modes = selectedModes,
+            langs = selectedLangs,
+        ) => {
             try {
                 setLoading(true)
                 const res = await fetch('/api/search', {
@@ -170,6 +209,7 @@ function SearchPageInner() {
                         radius_km: r,
                         specialties_filter: specs.length ? specs : undefined,
                         modes_filter: modes.length ? modes : undefined,
+                        languages_filter: langs.length ? langs : undefined,
                     }),
                 })
                 const json = (await res.json()) as { ok?: boolean; results?: Result[] }
@@ -180,7 +220,7 @@ function SearchPageInner() {
                 setLoading(false)
             }
         },
-        [selectedModes, selectedSpecs],
+        [selectedModes, selectedSpecs, selectedLangs],
     )
 
     // Pin utilisateur (DOM rouge + halo)
@@ -218,13 +258,13 @@ function SearchPageInner() {
                 userMovedRef.current = false
                 ignoreNextMoveRef.current = true
                 m.easeTo({ center: [longitude, latitude], zoom: 12, duration: 600 })
-                fetchResults(latitude, longitude, radiusRef.current)
-                updateUrl(latitude, longitude, radiusRef.current)
+                fetchResults(latitude, longitude, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
+                updateUrl(latitude, longitude, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
             },
             () => { },
             { enableHighAccuracy: true, timeout: 8000 },
         )
-    }, [fetchResults, placeUserMarker, updateUrl])
+    }, [fetchResults, placeUserMarker, updateUrl, selectedSpecs, selectedModes, selectedLangs])
 
     const setHomeHere = useCallback(() => {
         const m = mapRef.current
@@ -264,8 +304,12 @@ function SearchPageInner() {
         )
 
         // marquer le premier geste utilisateur
-        m.on('dragstart', () => { userMovedRef.current = true })
-        m.on('zoomstart', () => { userMovedRef.current = true })
+        m.on('dragstart', () => {
+            userMovedRef.current = true
+        })
+        m.on('zoomstart', () => {
+            userMovedRef.current = true
+        })
 
         m.on('error', (ev: unknown) => {
             const err = (ev as { error?: unknown })?.error ?? ev
@@ -274,8 +318,12 @@ function SearchPageInner() {
 
         // Charger un domicile (URL ou localStorage)
         const maybePlaceHome = () => {
-            const homeLatStr = searchParams.get('home_lat') ?? (typeof window !== 'undefined' ? localStorage.getItem('homeLat') : null)
-            const homeLngStr = searchParams.get('home_lng') ?? (typeof window !== 'undefined' ? localStorage.getItem('homeLng') : null)
+            const homeLatStr =
+                searchParams.get('home_lat') ??
+                (typeof window !== 'undefined' ? localStorage.getItem('homeLat') : null)
+            const homeLngStr =
+                searchParams.get('home_lng') ??
+                (typeof window !== 'undefined' ? localStorage.getItem('homeLng') : null)
             const hLat = homeLatStr ? Number(homeLatStr) : NaN
             const hLng = homeLngStr ? Number(homeLngStr) : NaN
             if (Number.isFinite(hLat) && Number.isFinite(hLng)) {
@@ -287,8 +335,8 @@ function SearchPageInner() {
             m.resize()
             maybePlaceHome()
             const c = m.getCenter()
-            await fetchResults(c.lat, c.lng, radiusRef.current)
-            updateUrl(c.lat, c.lng, radiusRef.current)
+            await fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
+            updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
         }
 
         const onMoveEnd = () => {
@@ -300,8 +348,8 @@ function SearchPageInner() {
             if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
             moveTimerRef.current = window.setTimeout(() => {
                 const c = m.getCenter()
-                fetchResults(c.lat, c.lng, radiusRef.current)
-                updateUrl(c.lat, c.lng, radiusRef.current)
+                fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
+                updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
             }, 300)
         }
 
@@ -318,24 +366,24 @@ function SearchPageInner() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []) // pas de re-création → la carte ne "disparaît" plus
 
-    // Rayon changé → relance
+    // Rayon changé → relance (inclut modes/specs/langs)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
         userMovedRef.current = false
         const c = m.getCenter()
-        fetchResults(c.lat, c.lng, radiusKm)
-        updateUrl(c.lat, c.lng, radiusKm)
-    }, [radiusKm, fetchResults, updateUrl])
+        fetchResults(c.lat, c.lng, radiusKm, selectedSpecs, selectedModes, selectedLangs)
+        updateUrl(c.lat, c.lng, radiusKm, selectedSpecs, selectedModes, selectedLangs)
+    }, [radiusKm, fetchResults, updateUrl, selectedSpecs, selectedModes, selectedLangs])
 
     // Filtres changés → relance (et maj URL)
     useEffect(() => {
         const m = mapRef.current
         if (!m) return
         const c = m.getCenter()
-        fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes)
-        updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes)
-    }, [selectedSpecs, selectedModes, fetchResults, updateUrl])
+        fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
+        updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
+    }, [selectedSpecs, selectedModes, selectedLangs, fetchResults, updateUrl])
 
     // Marqueurs + popups + fitBounds (auto-fit si l’utilisateur n’a pas bougé)
     useEffect(() => {
@@ -399,16 +447,6 @@ function SearchPageInner() {
         [results],
     )
 
-    // Accordéons ouverts/fermés par catégorie
-    const [openCats, setOpenCats] = useState<Record<string, boolean>>({
-        pediatrie: false,
-        adulte: false,
-        geriatrie: false,
-    })
-    const toggleCat = (slug: string) =>
-        setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
-
-
     return (
         <main className="grid gap-6 md:grid-cols-[360px_1fr]">
             <section className="space-y-3">
@@ -436,18 +474,17 @@ function SearchPageInner() {
                 {/* Filtres */}
                 <div className="rounded-xl border p-3 space-y-3">
                     <div className="text-sm font-medium">Filtres</div>
+
+                    {/* Spécialités (accordéons) */}
                     <div className="space-y-2">
                         <div className="text-xs text-neutral-500">Spécialités</div>
 
                         <div className="space-y-2">
                             {SPECIALTIES.map((cat) => {
-                                const selectedInCat = cat.children.filter((sub) =>
-                                    selectedSpecs.includes(sub.slug),
-                                ).length
+                                const selectedInCat = cat.children.filter((sub) => selectedSpecs.includes(sub.slug)).length
 
                                 return (
                                     <div key={cat.slug} className="rounded-lg border">
-                                        {/* En-tête cliquable */}
                                         <button
                                             type="button"
                                             onClick={() => toggleCat(cat.slug)}
@@ -462,56 +499,42 @@ function SearchPageInner() {
                                                 )}
                                             </span>
                                             <span
-                                                className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''
-                                                    }`}
+                                                className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`}
                                                 aria-hidden
                                             >
                                                 ▶
                                             </span>
                                         </button>
 
-                                        {/* Contenu dépliable */}
                                         <div
                                             className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'
                                                 }`}
                                         >
                                             <div className="flex flex-wrap gap-2 px-3 pb-3">
-                                                {/* Bouton “Tout / Rien” */}
                                                 <button
                                                     type="button"
                                                     onClick={() => {
                                                         const allSlugs = cat.children.map((c) => c.slug)
-                                                        const allSelected = allSlugs.every((s) =>
-                                                            selectedSpecs.includes(s),
-                                                        )
+                                                        const allSelected = allSlugs.every((s) => selectedSpecs.includes(s))
                                                         setSelectedSpecs((prev) =>
-                                                            allSelected
-                                                                ? prev.filter((s) => !allSlugs.includes(s))
-                                                                : Array.from(new Set([...prev, ...allSlugs])),
+                                                            allSelected ? prev.filter((s) => !allSlugs.includes(s)) : Array.from(new Set([...prev, ...allSlugs])),
                                                         )
                                                     }}
                                                     className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
                                                 >
-                                                    {cat.children.every((s) => selectedSpecs.includes(s.slug))
-                                                        ? 'Tout désélectionner'
-                                                        : 'Tout sélectionner'}
+                                                    {cat.children.every((s) => selectedSpecs.includes(s.slug)) ? 'Tout désélectionner' : 'Tout sélectionner'}
                                                 </button>
 
                                                 {cat.children.map((sub) => {
                                                     const checked = selectedSpecs.includes(sub.slug)
                                                     return (
-                                                        <label
-                                                            key={sub.slug}
-                                                            className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm"
-                                                        >
+                                                        <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
                                                             <input
                                                                 type="checkbox"
                                                                 checked={checked}
                                                                 onChange={(e) =>
                                                                     setSelectedSpecs((prev) =>
-                                                                        e.target.checked
-                                                                            ? [...prev, sub.slug]
-                                                                            : prev.filter((x) => x !== sub.slug),
+                                                                        e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug),
                                                                     )
                                                                 }
                                                             />
@@ -527,7 +550,7 @@ function SearchPageInner() {
                         </div>
                     </div>
 
-
+                    {/* Modes */}
                     <div className="space-y-2">
                         <div className="text-xs text-neutral-500">Modes</div>
                         <div className="flex flex-wrap gap-2">
@@ -551,6 +574,29 @@ function SearchPageInner() {
                         </div>
                     </div>
 
+                    {/* Langues */}
+                    <div className="space-y-2">
+                        <div className="text-xs text-neutral-500">Langues</div>
+                        <div className="flex flex-wrap gap-2">
+                            {LANGUAGES.map((l) => {
+                                const checked = selectedLangs.includes(l.value)
+                                return (
+                                    <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={(e) =>
+                                                setSelectedLangs((prev) => (e.target.checked ? [...prev, l.value] : prev.filter((x) => x !== l.value)))
+                                            }
+                                        />
+                                        {l.label}
+                                    </label>
+                                )
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Rayon */}
                     <div className="flex items-center gap-2 text-sm">
                         <label htmlFor="radius">Rayon</label>
                         <input
@@ -582,19 +628,12 @@ function SearchPageInner() {
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <div className="font-medium">{it.title}</div>
-                                    {it.subtitle && (
-                                        <div className="text-sm text-neutral-600">{it.subtitle}</div>
-                                    )}
+                                    {it.subtitle && <div className="text-sm text-neutral-600">{it.subtitle}</div>}
                                     <div className="text-sm text-neutral-600">{it.address}</div>
-                                    {it.km && (
-                                        <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>
-                                    )}
+                                    {it.km && <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>}
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    <a
-                                        className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
-                                        href={`/ergo/${it.slug}`}
-                                    >
+                                    <a className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" href={`/ergo/${it.slug}`}>
                                         Voir le profil
                                     </a>
                                 </div>
