@@ -2,13 +2,13 @@ import { redirect } from 'next/navigation'
 import { supabaseServer } from '@/lib/supabase'
 import EditBasics, { TherapistBasics } from '@/components/ui/edit-basics'
 import OnboardForm from '@/components/ui/onboard-form'
+import LogoutButton from '@/components/auth/logout-button' // <— importer le composant client
 
 export default async function ProProfilePage() {
     const supabase = await supabaseServer()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) redirect('/pro/connexion')
 
-    // On tente de charger le therapist lié au compte
     const { data: th } = await supabase
         .from('therapists')
         .select('id, full_name, headline, phone, booking_url, is_published')
@@ -29,35 +29,11 @@ export default async function ProProfilePage() {
             ) : (
                 <>
                     <EditBasics therapist={th} />
-                    <form action="/pro/connexion" className="rounded-2xl border p-4">
-                        {/* Bouton de déconnexion client-side */}
+                    <section className="rounded-2xl border p-4">
                         <LogoutButton />
-                    </form>
+                    </section>
                 </>
             )}
         </main>
-    )
-}
-
-// Petit bouton client pour se déconnecter proprement
-'use client'
-import { supabaseBrowser } from '@/lib/supabase-browser'
-import { useRouter } from 'next/navigation'
-
-function LogoutButton() {
-    const sb = supabaseBrowser()
-    const router = useRouter()
-    return (
-        <button
-            type="button"
-            className="btn"
-            onClick={async () => {
-                await sb.auth.signOut()
-                router.replace('/pro/connexion')
-                router.refresh()
-            }}
-        >
-            Se déconnecter
-        </button>
     )
 }
