@@ -19,26 +19,31 @@ export default function ProLoginPage() {
     const onSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setErr(null); setOk(null)
-        if (!email || !password) {
-            setErr('E-mail et mot de passe requis.')
-            return
-        }
+        if (!email || !password) { setErr('E-mail et mot de passe requis.'); return }
         setLoading(true)
         try {
             const { error } = await sb.auth.signInWithPassword({ email, password })
-            if (error) {
-                setErr(error.message)
-            } else {
-                // Connexion ok → profil
-                router.replace('/pro/mon-profil')
-                router.refresh()
-            }
-        } catch (e: unknown) {
+            if (error) { setErr(error.message); return }
+
+            // 1) Récupère la session côté client
+            const { data: sess } = await sb.auth.getSession()
+            // 2) Pousse-la explicitement au serveur (cookies SSR)
+            await fetch('/auth/callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ event: 'SIGNED_IN', session: sess.session }),
+            })
+
+            // 3) Puis navigue (le serveur te reconnaîtra cette fois)
+            window.location.assign('/pro/mon-profil')
+        } catch (e) {
             setErr(e instanceof Error ? e.message : 'Erreur inconnue.')
         } finally {
             setLoading(false)
         }
     }
+
 
     const sendMagicLink = async () => {
         setErr(null); setOk(null)

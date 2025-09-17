@@ -2,6 +2,7 @@ import "./globals.css"
 import { ReactNode } from "react"
 import Link from "next/link"
 import SiteHeader from "@/components/ui/site-header"
+import SupabaseAuthListener from '@/lib/supabase-auth-listener'
 
 export const metadata = {
   title: "ErgoConnect — Trouvez un ergothérapeute en Belgique",
@@ -16,6 +17,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <SiteHeader />
 
         <div className="container py-8 sm:py-10">{children}</div>
+
+        <SupabaseAuthListener />
 
         <footer className="mt-16 border-t">
           <div className="container py-8 text-sm text-neutral-600">
