@@ -3,14 +3,23 @@
 import { useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
-export default function EditBasics({ therapist }: { therapist: any }) {
+export type TherapistBasics = {
+    id: string
+    full_name: string | null
+    headline: string | null
+    phone: string | null
+    booking_url: string | null
+    is_published: boolean | null
+}
+
+export default function EditBasics({ therapist }: { therapist: TherapistBasics }) {
     const sb = supabaseBrowser()
     const [form, setForm] = useState({
         full_name: therapist.full_name ?? '',
         headline: therapist.headline ?? '',
         phone: therapist.phone ?? '',
         booking_url: therapist.booking_url ?? '',
-        is_published: !!therapist.is_published,
+        is_published: Boolean(therapist.is_published),
     })
     const [saving, setSaving] = useState(false)
     const [msg, setMsg] = useState<string | null>(null)
@@ -18,7 +27,7 @@ export default function EditBasics({ therapist }: { therapist: any }) {
     const onSave = async () => {
         setSaving(true); setMsg(null)
         const { error } = await sb.from('therapists').update({
-            full_name: form.full_name,
+            full_name: form.full_name || null,
             headline: form.headline || null,
             phone: form.phone || null,
             booking_url: form.booking_url || null,

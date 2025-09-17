@@ -39,9 +39,15 @@ export default function ProSignup() {
                 },
             })
             if (error) throw error
-            setOk("Merci ! Vérifiez votre boîte mail pour confirmer votre compte. Vous serez redirigé vers votre profil.")
-        } catch (e: any) {
-            setErr(e?.message ?? 'Une erreur est survenue.')
+            setOk('Merci ! Vérifiez votre boîte mail pour confirmer votre compte. Vous serez redirigé vers votre profil.')
+        } catch (e: unknown) {
+            const message =
+                e instanceof Error
+                    ? e.message
+                    : (typeof e === 'object' && e !== null && 'message' in e
+                        ? String((e as { message?: unknown }).message)
+                        : 'Une erreur est survenue.')
+            setErr(message)
         } finally {
             setLoading(false)
         }

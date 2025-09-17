@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const LANGS = [
     { value: 'fr', label: 'Français' },
@@ -24,7 +25,7 @@ export default function OnboardForm({ userId, userEmail }: Props) {
     const [ok, setOk] = useState<string | null>(null)
     const [err, setErr] = useState<string | null>(null)
 
-    // spécialités dynamiques (depuis ta table)
+    // spécialités dynamiques
     const [specs, setSpecs] = useState<{ slug: string; label: string; parent_slug: string | null }[]>([])
     useEffect(() => {
         sb.from('specialties').select('slug,label,parent_slug').then(({ data }) => setSpecs(data ?? []))
@@ -33,9 +34,7 @@ export default function OnboardForm({ userId, userEmail }: Props) {
     const roots = useMemo(() => specs.filter(s => !s.parent_slug), [specs])
     const childrenBy = useMemo(() => {
         const m: Record<string, { slug: string; label: string }[]> = {}
-        specs.forEach(s => {
-            if (s.parent_slug) { (m[s.parent_slug] ||= []).push({ slug: s.slug, label: s.label }) }
-        })
+        specs.forEach(s => { if (s.parent_slug) (m[s.parent_slug] ||= []).push({ slug: s.slug, label: s.label }) })
         Object.values(m).forEach(arr => arr.sort((a, b) => a.label.localeCompare(b.label, 'fr')))
         return m
     }, [specs])
@@ -54,14 +53,15 @@ export default function OnboardForm({ userId, userEmail }: Props) {
 
     const toggle = (key: 'languages' | 'specialties' | 'modes', value: string) =>
         setForm(v => ({
-            ...v, [key]: v[key as keyof typeof v].includes(value)
+            ...v,
+            [key]: (v[key as keyof typeof v] as string[]).includes(value)
                 ? (v[key as keyof typeof v] as string[]).filter(x => x !== value)
                 : [...(v[key as keyof typeof v] as string[]), value]
         }))
 
     const geoHere = () => {
         if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition((pos) => {
+        navigator.geolocation.getCurrentPosition(pos => {
             setForm(v => ({ ...v, lat: String(pos.coords.latitude), lng: String(pos.coords.longitude) }))
         })
     }
@@ -76,7 +76,7 @@ export default function OnboardForm({ userId, userEmail }: Props) {
 
         setLoading(true)
         try {
-            // 1) créer therapist
+            // 1) therapist
             const slugBase = slugify(form.full_name)
             const slug = await makeUniqueSlug(sb, slugBase)
 
@@ -93,15 +93,14 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                     website: null,
                     booking_url: form.booking_url || null,
                     price_hint: null,
-                    is_published: true,   // on publie directement (tu peux mettre false si modération)
-                    is_approved: true,    // idem
+                    is_published: true,
+                    is_approved: true,
                 })
                 .select('id')
                 .single()
 
             if (e1) throw e1
-
-            const therapist_id = th!.id as string
+            const therapist_id = (th as { id: string }).id
 
             // 2) langues
             if (form.languages.length) {
@@ -125,8 +124,7 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                 city: null,
                 postal_code: null,
                 country: 'BE',
-                modes: form.modes as any,
-                // on stocke coords via WKT côté SQL (Supabase accepte le cast text->geography si tu as un trigger; sinon laisse null)
+                modes: form.modes,   // plus de "as any"
                 coords: null,
                 lon: lng,
                 lat: lat,
@@ -138,8 +136,14 @@ export default function OnboardForm({ userId, userEmail }: Props) {
                 full_name: '', headline: '', phone: '', booking_url: '',
                 languages: [], specialties: [], lat: '', lng: '', modes: []
             })
-        } catch (e: any) {
-            setErr(e?.message ?? 'Erreur inconnue')
+        } catch (e: unknown) {
+            const msg =
+                e instanceof Error
+                    ? e.message
+                    : (typeof e === 'object' && e !== null && 'message' in e
+                        ? String((e as { message?: unknown }).message)
+                        : 'Erreur inconnue')
+            setErr(msg)
         } finally {
             setLoading(false)
         }
@@ -239,7 +243,7 @@ function slugify(s: string) {
         .replace(/(^-|-$)+/g, '')
 }
 
-async function makeUniqueSlug(sb: ReturnType<typeof supabaseBrowser>, base: string) {
+async function makeUniqueSlug(sb: SupabaseClient, base: string) {
     let candidate = base
     for (let i = 0; i < 5; i++) {
         const { data } = await sb.from('therapists').select('id').eq('slug', candidate).maybeSingle()
