@@ -1,19 +1,18 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import {
-    Stethoscope,
-    Search,
-    ShieldCheck,
+    Home as HomeIcon,
     Users,
-    MapPin,
-    Calendar,
-    Globe,
+    Stethoscope,
     Wrench,
+    FileText,
+    ShieldCheck,
+    MapPin,
 } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
-export default function ProLanding() {
+export default function AmenagementPage() {
     return (
         <main className="space-y-16">
             {/* HERO */}
@@ -21,84 +20,87 @@ export default function ProLanding() {
                 <div className="grid items-center gap-8 md:grid-cols-2">
                     <div className="space-y-5">
                         <span className="inline-flex items-center gap-2 rounded-full border bg-white/70 px-3 py-1 text-xs font-medium">
-                            <ShieldCheck className="h-4 w-4" />
-                            Espace professionnel — Ergothérapeutes
+                            <HomeIcon className="h-4 w-4" />
+                            Aménagement du domicile — ErgoConnect Pro
                         </span>
                         <h1 className="text-balance text-3xl font-semibold md:text-4xl">
-                            Gagnez en visibilité. Travaillez plus simplement.
+                            Facilitez les projets d’aménagement PMR
                         </h1>
                         <p className="max-w-prose text-neutral-700">
-                            ErgoConnect met en avant votre expertise auprès du grand public et
-                            vous prépare des outils pour{" "}
-                            <strong>l’aménagement du domicile</strong> et la gestion de votre activité.
+                            Un espace collaboratif pensé pour les <strong>clients</strong>, les{" "}
+                            <strong>ergothérapeutes</strong> et les <strong>entrepreneurs</strong> :
+                            recommandations claires, documents standardisés, suivi de A à Z.
                         </p>
+
                         <div className="flex flex-wrap gap-3">
-                            <Link href="/pro/inscription">
+                            <Link href="/recherche">
                                 <Button size="lg">
                                     <Stethoscope className="mr-2 h-4 w-4" />
-                                    Créer mon compte
+                                    Trouver un ergo spécialisé
                                 </Button>
                             </Link>
-                            <Link href="/pro/connexion">
+                            <Link href="/pro/inscription">
                                 <Button size="lg" variant="outline">
-                                    Me connecter
+                                    Créer mon profil ergo
+                                </Button>
+                            </Link>
+                            <Link href="/contact">
+                                <Button size="lg" variant="outline">
+                                    Je suis entrepreneur
                                 </Button>
                             </Link>
                         </div>
+
                         <ul className="mt-1 grid gap-2 text-sm text-neutral-700 md:grid-cols-2">
                             <li className="inline-flex items-center gap-2">
-                                <Search className="h-4 w-4" />
-                                Profil visible sur la carte
+                                <ShieldCheck className="h-4 w-4" />
+                                Parcours sécurisé & centralisé
                             </li>
                             <li className="inline-flex items-center gap-2">
-                                <Globe className="h-4 w-4" />
-                                Langues & spécialités détaillées
+                                <FileText className="h-4 w-4" />
+                                Rapports standardisés
+                            </li>
+                            <li className="inline-flex items-center gap-2">
+                                <Wrench className="h-4 w-4" />
+                                Recos matériaux & équipements
                             </li>
                             <li className="inline-flex items-center gap-2">
                                 <MapPin className="h-4 w-4" />
-                                Modalités cabinet / domicile / visio
-                            </li>
-                            <li className="inline-flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                Lien de prise de RDV
+                                Suivi des chantiers
                             </li>
                         </ul>
                     </div>
 
                     <div className="rounded-xl border bg-white p-6 shadow-sm">
-                        <h2 className="mb-3 text-lg font-medium">Comment ça marche ?</h2>
-                        <ol className="grid gap-3 text-sm">
-                            <Step n={1} title="Créez votre compte et validez votre e-mail" />
-                            <Step n={2} title="Complétez votre profil (spécialités, langues, coordonnées)" />
-                            <Step n={3} title="Ajoutez votre localisation et vos modalités" />
-                            <Step n={4} title="Votre fiche devient trouvable sur la carte" />
+                        <h2 className="mb-4 text-lg font-medium">Le parcours en 4 étapes</h2>
+                        <ol className="grid gap-3 text-sm text-neutral-800">
+                            <Step n={1} title="Prise de contact & définition des besoins" />
+                            <Step n={2} title="Visite, mesures, photos & recommandations ergo" />
+                            <Step n={3} title="Chiffrage avec l’entrepreneur & planning" />
+                            <Step n={4} title="Travaux, validation, rapport final" />
                         </ol>
-                        <div className="mt-4 rounded-lg border bg-neutral-50 p-3 text-xs text-neutral-700">
-                            <Wrench className="mr-2 inline-block h-4 w-4" />
-                            Bientôt : module d’aménagement (rapports, suivi collaboratif).
-                        </div>
                     </div>
                 </div>
             </section>
 
-            {/* AVANTAGES */}
+            {/* POUR QUI ? */}
             <section className="space-y-10">
-                <h2 className="text-2xl font-semibold">Pourquoi rejoindre ErgoConnect ?</h2>
+                <h2 className="text-2xl font-semibold">Pour qui ?</h2>
                 <div className="grid gap-4 md:grid-cols-3">
                     <Card
-                        icon={<Search className="h-5 w-5" />}
-                        title="Plus de visibilité"
-                        desc="Apparaissez dans les résultats près des patients qui vous cherchent."
+                        icon={<Users className="h-5 w-5" />}
+                        title="Clients & familles"
+                        desc="Comprenez le projet, suivez l’avancement, retrouvez tous vos documents au même endroit."
                     />
                     <Card
-                        icon={<Users className="h-5 w-5" />}
-                        title="Infos claires"
-                        desc="Spécialités, langues, modalités, prix indicatif et lien de RDV en un coup d’œil."
+                        icon={<Stethoscope className="h-5 w-5" />}
+                        title="Ergothérapeutes"
+                        desc="Générez des rapports clairs, centralisez les infos et collaborez efficacement."
                     />
                     <Card
                         icon={<Wrench className="h-5 w-5" />}
-                        title="Outils métier (à venir)"
-                        desc="Formulaires simples → rapports automatiques ; espace de suivi client–ergo–entrepreneur."
+                        title="Entrepreneurs"
+                        desc="Recevez les éléments techniques standardisés, fournissez un chiffrage fiable."
                     />
                 </div>
             </section>
@@ -106,18 +108,18 @@ export default function ProLanding() {
             {/* CTA */}
             <section className="rounded-2xl border bg-neutral-50 p-8 text-center md:p-12">
                 <h3 className="text-balance text-2xl font-semibold">
-                    Rejoignez les ergothérapeutes déjà visibles sur ErgoConnect
+                    Lancez votre projet d’aménagement avec un ergothérapeute spécialisé
                 </h3>
                 <p className="mx-auto mt-2 max-w-prose text-neutral-700">
-                    Créez votre profil en quelques minutes. C’est gratuit pendant la phase bêta.
+                    Parcourez la carte, choisissez un professionnel et démarrez la discussion.
                 </p>
                 <div className="mt-6 flex justify-center gap-3">
-                    <Link href="/pro/inscription">
-                        <Button size="lg">Créer mon compte</Button>
+                    <Link href="/recherche">
+                        <Button size="lg">Trouver un ergo</Button>
                     </Link>
-                    <Link href="/pro/connexion">
+                    <Link href="/contact">
                         <Button size="lg" variant="outline">
-                            Me connecter
+                            Nous contacter
                         </Button>
                     </Link>
                 </div>
