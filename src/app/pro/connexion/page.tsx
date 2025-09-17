@@ -1,7 +1,9 @@
+// src/app/pro/connexion/page.tsx
 'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
 export default function ProLoginPage() {
@@ -11,41 +13,47 @@ export default function ProLoginPage() {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
-    const [msg, setMsg] = useState<string | null>(null)
     const [err, setErr] = useState<string | null>(null)
+    const [ok, setOk] = useState<string | null>(null)
 
     const onSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        setErr(null); setMsg(null)
-        if (!email || !password) { setErr('E-mail et mot de passe requis.'); return }
+        setErr(null); setOk(null)
+        if (!email || !password) {
+            setErr('E-mail et mot de passe requis.')
+            return
+        }
         setLoading(true)
         try {
             const { error } = await sb.auth.signInWithPassword({ email, password })
-            if (error) throw error
-            router.replace('/pro/mon-profil')
-            router.refresh()
+            if (error) {
+                setErr(error.message)
+            } else {
+                // Connexion ok → profil
+                router.replace('/pro/mon-profil')
+                router.refresh()
+            }
         } catch (e: unknown) {
-            const m = e instanceof Error ? e.message : 'Impossible de vous connecter.'
-            setErr(m)
+            setErr(e instanceof Error ? e.message : 'Erreur inconnue.')
         } finally {
             setLoading(false)
         }
     }
 
     const sendMagicLink = async () => {
-        if (!email) { setErr('Indiquez votre e-mail.'); return }
-        setErr(null); setMsg(null); setLoading(true)
+        setErr(null); setOk(null)
+        if (!email) { setErr('Saisissez votre e-mail.'); return }
+        setLoading(true)
         try {
             const origin = window.location.origin
             const { error } = await sb.auth.signInWithOtp({
                 email,
                 options: { emailRedirectTo: `${origin}/pro/mon-profil` },
             })
-            if (error) throw error
-            setMsg('Lien magique envoyé. Vérifiez votre boîte mail.')
+            if (error) setErr(error.message)
+            else setOk('Lien envoyé ! Vérifiez votre boîte mail.')
         } catch (e: unknown) {
-            const m = e instanceof Error ? e.message : 'Envoi impossible.'
-            setErr(m)
+            setErr(e instanceof Error ? e.message : 'Erreur inconnue.')
         } finally {
             setLoading(false)
         }
@@ -53,7 +61,7 @@ export default function ProLoginPage() {
 
     return (
         <main className="mx-auto max-w-md space-y-6">
-            <h1 className="text-2xl font-semibold">Me connecter</h1>
+            <h1 className="text-2xl font-semibold">Connexion</h1>
 
             <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border p-4">
                 <div>
@@ -62,8 +70,9 @@ export default function ProLoginPage() {
                         type="email"
                         className="input"
                         value={email}
-                        onChange={e => setEmail(e.target.value)}
+                        onChange={(e) => setEmail(e.target.value)}
                         autoComplete="email"
+                        required
                     />
                 </div>
                 <div>
@@ -72,28 +81,27 @@ export default function ProLoginPage() {
                         type="password"
                         className="input"
                         value={password}
-                        onChange={e => setPassword(e.target.value)}
+                        onChange={(e) => setPassword(e.target.value)}
                         autoComplete="current-password"
+                        required
                     />
                 </div>
 
-                <button disabled={loading} className="btn w-full">
+                <button type="submit" className="btn w-full" disabled={loading}>
                     {loading ? 'Connexion…' : 'Se connecter'}
                 </button>
 
-                <div className="flex items-center justify-between text-sm">
-                    <button type="button" onClick={sendMagicLink} className="underline">
-                        Recevoir un lien magique
-                    </button>
-                    <a className="underline" href="/pro/mot-de-passe">Mot de passe oublié ?</a>
-                </div>
+                <button type="button" className="btn w-full" onClick={sendMagicLink} disabled={loading}>
+                    {loading ? 'Envoi…' : 'Recevoir un lien magique'}
+                </button>
 
-                {msg && <p className="text-sm text-green-700">{msg}</p>}
+                {ok && <p className="text-sm text-green-700">{ok}</p>}
                 {err && <p className="text-sm text-red-700">{err}</p>}
             </form>
 
-            <p className="text-sm text-neutral-600">
-                Pas encore de compte ? <a className="underline" href="/pro/inscription">Créer mon compte</a>
+            <p className="text-sm text-neutral-700">
+                Pas encore de compte ?{' '}
+                <Link href="/pro/inscription" className="underline">Créer un compte</Link>
             </p>
         </main>
     )
