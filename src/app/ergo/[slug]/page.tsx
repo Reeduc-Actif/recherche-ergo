@@ -184,18 +184,18 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
             )}
 
             {/* Langues parlées */}
-            {languages.length > 0 && (
+            {languages?.length ? (
                 <div>
                     <h2 className="mb-1 text-lg font-medium">Langues</h2>
                     <div className="flex flex-wrap gap-2">
-                        {languages.map((label) => (
-                            <span key={label} className="rounded-full border px-2 py-0.5 text-sm">
-                                {label}
+                        {languages.map((code, i) => (
+                            <span key={`${code}-${i}`} className="rounded-full border px-2 py-0.5 text-sm">
+                                {mapLang(code)}
                             </span>
                         ))}
                     </div>
                 </div>
-            )}
+            ) : null}
 
             {/* Localisations + modes */}
             {locs && locs.length > 0 && (
@@ -231,21 +231,6 @@ function slugToLabelFallback(slug: string) {
         .split('-')
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
         .join(' ')
-}
-
-function mapLang(code: string): string | null {
-    // codes attendus: 'fr','nl','de','en'
-    const m: Record<string, string> = {
-        fr: 'Français',
-        nl: 'Néerlandais',
-        de: 'Allemand',
-        en: 'Anglais',
-        FR: 'Français',
-        NL: 'Néerlandais',
-        DE: 'Allemand',
-        EN: 'Anglais',
-    }
-    return m[code] ?? null
 }
 
 function modeLabel(m: string) {
