@@ -19,6 +19,8 @@ const DEFAULT_RADIUS_KM = 25
 const MIN_R = 5
 const MAX_R = 300
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+const BE_BOUNDS: [[number, number], [number, number]] = [[2.5, 49.4], [6.4, 51.6]]
+const MAX_BOUNDS: [[number, number], [number, number]] = [[2.0, 49.0], [7.0, 52.2]]
 
 // Hiérarchie des spécialités — slugs alignés avec la DB
 const SPECIALTIES = [
@@ -290,9 +292,10 @@ function SearchPageInner() {
             container: mapDiv.current,
             style: 'mapbox://styles/mapbox/streets-v12',
             center: initialCenterRef.current,
-            zoom: 11,
+            zoom: 7, // <— au lieu de 11
         })
         mapRef.current = m
+        m.setMaxBounds(MAX_BOUNDS) // <— empêche de “partir au large”
 
         m.addControl(new mapboxgl.NavigationControl(), 'top-right')
         m.addControl(
@@ -334,6 +337,16 @@ function SearchPageInner() {
         const onLoad = async () => {
             m.resize()
             maybePlaceHome()
+
+            const hasUrlCenter =
+                Number.isFinite(urlLat) && Number.isFinite(urlLng)
+
+            if (!hasUrlCenter) {
+                // centre instantanément sur la Belgique sans déclencher de moveend parasite
+                ignoreNextMoveRef.current = true
+                m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 })
+            }
+
             const c = m.getCenter()
             await fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
             updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedModes, selectedLangs)
