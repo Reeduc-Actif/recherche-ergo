@@ -6,7 +6,6 @@ import { supabaseServer } from '@/lib/supabase'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Helpers pour convertir '' -> undefined
 const emptyToUndef = <T,>(v: T) =>
   (v === '' || v === null || (typeof v === 'string' && v.trim() === '')) ? undefined : v
 
@@ -15,20 +14,16 @@ const Payload = z.object({
   headline: z.preprocess(emptyToUndef, z.string().trim().optional()),
   phone: z.preprocess(emptyToUndef, z.string().trim().optional()),
   booking_url: z.preprocess(emptyToUndef, z.string().url().optional()),
-
   languages: z.array(z.enum(['fr', 'nl', 'de', 'en'])).nonempty('Choisir au moins une langue'),
   specialties: z.array(z.string().min(1)).nonempty('Choisir au moins une spécialité'),
   modes: z.preprocess(
     (v) => Array.isArray(v) ? v : [],
     z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([]),
   ),
-
   address: z.string().trim().min(2),
   postal_code: z.string().trim().min(2),
   city: z.string().trim().min(2),
   country: z.preprocess(emptyToUndef, z.string().trim().default('BE')),
-
-  // IMPORTANT : ne pas échouer si '' est envoyé
   price_min: z.preprocess(
     (v) => emptyToUndef(v),
     z.number().int().min(1).max(1000),
@@ -57,7 +52,8 @@ async function geocode(addr: { address: string; postal_code: string; city: strin
       return { lon: Number(lon), lat: Number(lat) }
     }
     return { lon: null, lat: null }
-  } catch {
+  } catch (err) {
+    console.error('Geocode error:', err)
     return { lon: null, lat: null }
   }
 }
@@ -70,32 +66,39 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 401 })
   }
 
-  // 1) parse + validations métier
+  // Parsing + validations
   let input: z.infer<typeof Payload>
   try {
     const raw = await req.json()
     input = Payload.parse(raw)
-  } catch (e) {
-    return NextResponse.json({ ok: false, error: 'Données invalides', details: e }, { status: 400 })
+  } catch (e: any) {
+    console.error('Zod parse error:', e)
+    return NextResponse.json(
+      { ok: false, error: 'Données invalides', details: e.errors ?? e },
+      { status: 400 }
+    )
   }
+
   if (input.price_min && input.price_max && input.price_min > input.price_max) {
     return NextResponse.json({ ok: false, error: 'price_min > price_max' }, { status: 400 })
   }
 
-  // 2) sécurité : filtrer les spécialités sur la table whitelist
+  // Spécialités whitelist
   const { data: allowedSpecs, error: specsErr } = await supabase
     .from('specialties')
     .select('slug')
   if (specsErr) {
-    return NextResponse.json({ ok: false, error: 'Erreur lecture spécialités' }, { status: 400 })
+    console.error('Specialties query error:', specsErr)
+    return NextResponse.json({ ok: false, error: 'Erreur lecture spécialités', details: specsErr }, { status: 400 })
   }
+
   const allowed = new Set((allowedSpecs ?? []).map(s => s.slug as string))
   const cleanSpecialties = (input.specialties ?? []).filter(s => allowed.has(s))
   if (cleanSpecialties.length === 0) {
-    return NextResponse.json({ ok: false, error: 'Aucune spécialité valide' }, { status: 400 })
+    return NextResponse.json({ ok: false, error: 'Aucune spécialité valide', received: input.specialties }, { status: 400 })
   }
 
-  // 3) géocodage
+  // Géocodage
   const { lon, lat } = await geocode({
     address: input.address,
     postal_code: input.postal_code,
@@ -103,7 +106,7 @@ export async function POST(req: Request) {
     country: input.country,
   })
 
-  // 4) slug unique (basé sur nom)
+  // Slug unique
   const base = input.full_name
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
@@ -114,13 +117,12 @@ export async function POST(req: Request) {
     slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
   }
 
-  // 5) transaction séquentielle avec upsert idempotent sur profile_id
+  // Transaction
   try {
-    // A) therapists (upsert par profile_id pour éviter les duplicats)
+    // A) therapist
     const { data: th, error: e1 } = await supabase
       .from('therapists')
       .upsert({
-        // si le profil existe déjà, on ne l’écrase pas agressivement
         slug,
         profile_id: user.id,
         full_name: input.full_name,
@@ -141,7 +143,7 @@ export async function POST(req: Request) {
     if (e1) throw e1
     const therapist_id = th!.id as string
 
-    // B) langues (table de relation : therapist_languages(language_code))
+    // B) langues
     if (input.languages?.length) {
       const rows = input.languages.map(code => ({ therapist_id, language_code: code }))
       const { error: e2 } = await supabase
@@ -150,7 +152,7 @@ export async function POST(req: Request) {
       if (e2) throw e2
     }
 
-    // C) spécialités (relation FK sécurisée par filtre plus haut)
+    // C) spécialités
     if (cleanSpecialties.length) {
       const rows = cleanSpecialties.map(slug => ({ therapist_id, specialty_slug: slug }))
       const { error: e3 } = await supabase
@@ -161,13 +163,13 @@ export async function POST(req: Request) {
 
     // D) localisation
     const coordsWkt = (lon != null && lat != null) ? `SRID=4326;POINT(${lon} ${lat})` : null
-    // pour idempotence : s’il existe déjà une localisation principale, on n’en recrée pas 50
     const { data: locExists, error: locErr } = await supabase
       .from('therapist_locations')
       .select('id')
       .eq('therapist_id', therapist_id)
       .limit(1)
     if (locErr) throw locErr
+
     if (!locExists || locExists.length === 0) {
       const { error: e4 } = await supabase.from('therapist_locations').insert({
         therapist_id,
@@ -180,8 +182,7 @@ export async function POST(req: Request) {
       })
       if (e4) throw e4
     } else {
-      // sinon, on met juste à jour l’adresse (optionnel)
-      await supabase.from('therapist_locations').update({
+      const { error: e5 } = await supabase.from('therapist_locations').update({
         address: input.address,
         city: input.city,
         postal_code: input.postal_code,
@@ -189,11 +190,19 @@ export async function POST(req: Request) {
         modes: input.modes ?? [],
         coords: coordsWkt,
       }).eq('id', locExists[0].id)
+      if (e5) throw e5
     }
 
     return NextResponse.json({ ok: true, therapist_id, slug })
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Erreur'
-    return NextResponse.json({ ok: false, error: msg }, { status: 400 })
+  } catch (e: any) {
+    console.error('Onboard error:', e)
+    const payload: Record<string, any> = {
+      ok: false,
+      error: e?.message ?? 'Erreur',
+    }
+    if (e?.details) payload.details = e.details
+    if (e?.hint) payload.hint = e.hint
+    if (e?.code) payload.code = e.code
+    return NextResponse.json(payload, { status: 400 })
   }
 }
