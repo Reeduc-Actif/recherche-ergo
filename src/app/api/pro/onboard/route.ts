@@ -6,30 +6,22 @@ import { supabaseServer } from '@/lib/supabase'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// --- Types & helpers d'erreurs ---
-type DbError = {
-  message?: string
-  details?: string
-  hint?: string
-  code?: string
-}
+type DbError = { message?: string; details?: string; hint?: string; code?: string }
 
-function serializeError(err: unknown): { ok: false; error: string; details?: unknown; hint?: string; code?: string } {
-  // Erreurs Zod (validation)
+function serializeError(err: unknown) {
   if (err instanceof ZodError) {
-    return { ok: false, error: 'Données invalides', details: err.errors }
+    return { ok: false, error: 'Données invalides', details: err.issues }
   }
-  // Erreurs "style" Supabase/PostgREST (structure habituelle)
   const e = err as Partial<DbError> | undefined
-  const errorMsg = (typeof e?.message === 'string' && e?.message) || 'Erreur'
-  const payload: { ok: false; error: string; details?: unknown; hint?: string; code?: string } = { ok: false, error: errorMsg }
-  if (e?.details) payload.details = e.details
-  if (e?.hint) payload.hint = e.hint
-  if (e?.code) payload.code = e.code
-  return payload
+  return {
+    ok: false,
+    error: e?.message ?? 'Erreur',
+    details: e?.details,
+    hint: e?.hint,
+    code: e?.code,
+  }
 }
 
-// Helpers pour convertir '' -> undefined
 const emptyToUndef = <T,>(v: T) =>
   v === '' || v === null || (typeof v === 'string' && v.trim() === '') ? undefined : v
 
@@ -56,11 +48,11 @@ const Payload = z.object({
 type Geo = { lon: number | null; lat: number | null }
 
 async function geocode(addr: { address: string; postal_code: string; city: string; country: string }): Promise<Geo> {
-  const token = process.env.MAPBOX_TOKEN_SERVER || process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-  if (!token) return { lon: null, lat: null }
-  const q = encodeURIComponent(`${addr.address}, ${addr.postal_code} ${addr.city}, ${addr.country}`)
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${q}.json?access_token=${token}&limit=1&country=be`
   try {
+    const token = process.env.MAPBOX_TOKEN_SERVER || process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+    if (!token) return { lon: null, lat: null }
+    const q = encodeURIComponent(`${addr.address}, ${addr.postal_code} ${addr.city}, ${addr.country}`)
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${q}.json?access_token=${token}&limit=1&country=be`
     const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) return { lon: null, lat: null }
     const json = (await res.json()) as { features?: Array<{ center?: [number, number] }> }
@@ -70,34 +62,40 @@ async function geocode(addr: { address: string; postal_code: string; city: strin
       return { lon: Number(lon), lat: Number(lat) }
     }
     return { lon: null, lat: null }
-  } catch (err: unknown) {
+  } catch (err) {
     console.error('Geocode error:', err)
     return { lon: null, lat: null }
   }
 }
 
 export async function POST(req: Request) {
+  console.log('--- ONBOARD START ---')
   const supabase = await supabaseServer()
   const { data: auth } = await supabase.auth.getUser()
   const user = auth?.user
   if (!user) {
+    console.warn('Unauthenticated request')
     return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 401 })
   }
+  console.log('User OK:', user.id)
 
-  // 1) parse + validations métier
+  // 1) parse
   let input: z.infer<typeof Payload>
   try {
     const raw = await req.json()
+    console.log('Payload reçu:', raw)
     input = Payload.parse(raw)
-  } catch (err: unknown) {
+    console.log('Payload validé:', input)
+  } catch (err) {
     console.error('Zod parse error:', err)
     return NextResponse.json(serializeError(err), { status: 400 })
   }
   if (input.price_min && input.price_max && input.price_min > input.price_max) {
+    console.warn('price_min > price_max', input.price_min, input.price_max)
     return NextResponse.json({ ok: false, error: 'price_min > price_max' }, { status: 400 })
   }
 
-  // 2) sécurité : filtrer les spécialités sur la table whitelist
+  // 2) spécialités whitelist
   const { data: allowedSpecs, error: specsErr } = await supabase.from('specialties').select('slug')
   if (specsErr) {
     console.error('Specialties query error:', specsErr)
@@ -105,11 +103,10 @@ export async function POST(req: Request) {
   }
   const allowed = new Set((allowedSpecs ?? []).map((s) => s.slug as string))
   const cleanSpecialties = (input.specialties ?? []).filter((s) => allowed.has(s))
+  console.log('Specialties filtrées:', cleanSpecialties)
   if (cleanSpecialties.length === 0) {
-    return NextResponse.json(
-      { ok: false, error: 'Aucune spécialité valide', received: input.specialties },
-      { status: 400 }
-    )
+    console.warn('Aucune spécialité valide:', input.specialties)
+    return NextResponse.json({ ok: false, error: 'Aucune spécialité valide', received: input.specialties }, { status: 400 })
   }
 
   // 3) géocodage
@@ -119,75 +116,62 @@ export async function POST(req: Request) {
     city: input.city,
     country: input.country,
   })
+  console.log('Coords géocodées:', lon, lat)
 
-  // 4) slug unique (basé sur nom)
-  const base = input.full_name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)+/g, '')
+  // 4) slug
+  const base = input.full_name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
   let slug = base || `ergo-${user.id.slice(0, 8)}`
   for (let i = 0; i < 5; i++) {
     const { data: exists } = await supabase.from('therapists').select('id').eq('slug', slug).maybeSingle()
     if (!exists) break
     slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
   }
+  console.log('Slug final:', slug)
 
-  // 5) transaction séquentielle avec upsert idempotent sur profile_id
+  // 5) transaction
   try {
-    // A) therapists
+    console.log('Insert therapist…')
     const { data: th, error: e1 } = await supabase
       .from('therapists')
-      .upsert(
-        {
-          slug,
-          profile_id: user.id,
-          full_name: input.full_name,
-          headline: input.headline ?? null,
-          email: user.email,
-          phone: input.phone ?? null,
-          website: null,
-          booking_url: input.booking_url ?? null,
-          price_hint: null,
-          price_min: input.price_min ?? null,
-          price_max: input.price_max ?? null,
-          price_unit: input.price_unit ?? null,
-          is_published: true,
-          is_approved: true,
-        },
-        { onConflict: 'profile_id' }
-      )
+      .upsert({
+        slug,
+        profile_id: user.id,
+        full_name: input.full_name,
+        headline: input.headline ?? null,
+        email: user.email,
+        phone: input.phone ?? null,
+        website: null,
+        booking_url: input.booking_url ?? null,
+        price_hint: null,
+        price_min: input.price_min ?? null,
+        price_max: input.price_max ?? null,
+        price_unit: input.price_unit ?? null,
+        is_published: true,
+        is_approved: true,
+      }, { onConflict: 'profile_id' })
       .select('id, slug')
       .single()
     if (e1) throw e1
     const therapist_id = th!.id as string
+    console.log('Therapist OK:', therapist_id)
 
-    // B) langues
     if (input.languages?.length) {
+      console.log('Insert languages:', input.languages)
       const rows = input.languages.map((code) => ({ therapist_id, language_code: code }))
-      const { error: e2 } = await supabase
-        .from('therapist_languages')
-        .upsert(rows, { onConflict: 'therapist_id,language_code', ignoreDuplicates: true })
+      const { error: e2 } = await supabase.from('therapist_languages').upsert(rows, { onConflict: 'therapist_id,language_code', ignoreDuplicates: true })
       if (e2) throw e2
     }
 
-    // C) spécialités
     if (cleanSpecialties.length) {
+      console.log('Insert specialties:', cleanSpecialties)
       const rows = cleanSpecialties.map((s) => ({ therapist_id, specialty_slug: s }))
-      const { error: e3 } = await supabase
-        .from('therapist_specialties')
-        .upsert(rows, { onConflict: 'therapist_id,specialty_slug', ignoreDuplicates: true })
+      const { error: e3 } = await supabase.from('therapist_specialties').upsert(rows, { onConflict: 'therapist_id,specialty_slug', ignoreDuplicates: true })
       if (e3) throw e3
     }
 
-    // D) localisation
+    console.log('Insert/update location…')
     const coordsWkt = lon != null && lat != null ? `SRID=4326;POINT(${lon} ${lat})` : null
-    const { data: locExists, error: locErr } = await supabase
-      .from('therapist_locations')
-      .select('id')
-      .eq('therapist_id', therapist_id)
-      .limit(1)
+    const { data: locExists, error: locErr } = await supabase.from('therapist_locations').select('id').eq('therapist_id', therapist_id).limit(1)
     if (locErr) throw locErr
 
     if (!locExists || locExists.length === 0) {
@@ -202,22 +186,20 @@ export async function POST(req: Request) {
       })
       if (e4) throw e4
     } else {
-      const { error: e5 } = await supabase
-        .from('therapist_locations')
-        .update({
-          address: input.address,
-          city: input.city,
-          postal_code: input.postal_code,
-          country: input.country,
-          modes: input.modes ?? [],
-          coords: coordsWkt,
-        })
-        .eq('id', locExists[0].id)
+      const { error: e5 } = await supabase.from('therapist_locations').update({
+        address: input.address,
+        city: input.city,
+        postal_code: input.postal_code,
+        country: input.country,
+        modes: input.modes ?? [],
+        coords: coordsWkt,
+      }).eq('id', locExists[0].id)
       if (e5) throw e5
     }
 
+    console.log('--- ONBOARD DONE ---')
     return NextResponse.json({ ok: true, therapist_id, slug })
-  } catch (err: unknown) {
+  } catch (err) {
     console.error('Onboard error:', err)
     return NextResponse.json(serializeError(err), { status: 400 })
   }
