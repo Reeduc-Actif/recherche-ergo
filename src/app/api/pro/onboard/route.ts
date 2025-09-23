@@ -1,13 +1,37 @@
 // src/app/api/pro/onboard/route.ts
 import { NextResponse } from 'next/server'
-import { z } from 'zod'
+import { z, ZodError } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// --- Types & helpers d'erreurs ---
+type DbError = {
+  message?: string
+  details?: string
+  hint?: string
+  code?: string
+}
+
+function serializeError(err: unknown): { ok: false; error: string; details?: unknown; hint?: string; code?: string } {
+  // Erreurs Zod (validation)
+  if (err instanceof ZodError) {
+    return { ok: false, error: 'Données invalides', details: err.errors }
+  }
+  // Erreurs "style" Supabase/PostgREST (structure habituelle)
+  const e = err as Partial<DbError> | undefined
+  const errorMsg = (typeof e?.message === 'string' && e?.message) || 'Erreur'
+  const payload: { ok: false; error: string; details?: unknown; hint?: string; code?: string } = { ok: false, error: errorMsg }
+  if (e?.details) payload.details = e.details
+  if (e?.hint) payload.hint = e.hint
+  if (e?.code) payload.code = e.code
+  return payload
+}
+
+// Helpers pour convertir '' -> undefined
 const emptyToUndef = <T,>(v: T) =>
-  (v === '' || v === null || (typeof v === 'string' && v.trim() === '')) ? undefined : v
+  v === '' || v === null || (typeof v === 'string' && v.trim() === '') ? undefined : v
 
 const Payload = z.object({
   full_name: z.string().trim().min(2, 'Nom requis'),
@@ -17,21 +41,15 @@ const Payload = z.object({
   languages: z.array(z.enum(['fr', 'nl', 'de', 'en'])).nonempty('Choisir au moins une langue'),
   specialties: z.array(z.string().min(1)).nonempty('Choisir au moins une spécialité'),
   modes: z.preprocess(
-    (v) => Array.isArray(v) ? v : [],
-    z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([]),
+    (v) => (Array.isArray(v) ? v : []),
+    z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([])
   ),
   address: z.string().trim().min(2),
   postal_code: z.string().trim().min(2),
   city: z.string().trim().min(2),
   country: z.preprocess(emptyToUndef, z.string().trim().default('BE')),
-  price_min: z.preprocess(
-    (v) => emptyToUndef(v),
-    z.number().int().min(1).max(1000),
-  ).optional(),
-  price_max: z.preprocess(
-    (v) => emptyToUndef(v),
-    z.number().int().min(1).max(1000),
-  ).optional(),
+  price_min: z.preprocess((v) => emptyToUndef(v), z.number().int().min(1).max(1000)).optional(),
+  price_max: z.preprocess((v) => emptyToUndef(v), z.number().int().min(1).max(1000)).optional(),
   price_unit: z.preprocess(emptyToUndef, z.enum(['hour', 'session']).optional()),
 })
 
@@ -45,14 +63,14 @@ async function geocode(addr: { address: string; postal_code: string; city: strin
   try {
     const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) return { lon: null, lat: null }
-    const json = await res.json()
+    const json = (await res.json()) as { features?: Array<{ center?: [number, number] }> }
     const feat = json?.features?.[0]
     if (feat?.center?.length === 2) {
       const [lon, lat] = feat.center
       return { lon: Number(lon), lat: Number(lat) }
     }
     return { lon: null, lat: null }
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Geocode error:', err)
     return { lon: null, lat: null }
   }
@@ -66,39 +84,35 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 401 })
   }
 
-  // Parsing + validations
+  // 1) parse + validations métier
   let input: z.infer<typeof Payload>
   try {
     const raw = await req.json()
     input = Payload.parse(raw)
-  } catch (e: any) {
-    console.error('Zod parse error:', e)
-    return NextResponse.json(
-      { ok: false, error: 'Données invalides', details: e.errors ?? e },
-      { status: 400 }
-    )
+  } catch (err: unknown) {
+    console.error('Zod parse error:', err)
+    return NextResponse.json(serializeError(err), { status: 400 })
   }
-
   if (input.price_min && input.price_max && input.price_min > input.price_max) {
     return NextResponse.json({ ok: false, error: 'price_min > price_max' }, { status: 400 })
   }
 
-  // Spécialités whitelist
-  const { data: allowedSpecs, error: specsErr } = await supabase
-    .from('specialties')
-    .select('slug')
+  // 2) sécurité : filtrer les spécialités sur la table whitelist
+  const { data: allowedSpecs, error: specsErr } = await supabase.from('specialties').select('slug')
   if (specsErr) {
     console.error('Specialties query error:', specsErr)
-    return NextResponse.json({ ok: false, error: 'Erreur lecture spécialités', details: specsErr }, { status: 400 })
+    return NextResponse.json(serializeError(specsErr), { status: 400 })
   }
-
-  const allowed = new Set((allowedSpecs ?? []).map(s => s.slug as string))
-  const cleanSpecialties = (input.specialties ?? []).filter(s => allowed.has(s))
+  const allowed = new Set((allowedSpecs ?? []).map((s) => s.slug as string))
+  const cleanSpecialties = (input.specialties ?? []).filter((s) => allowed.has(s))
   if (cleanSpecialties.length === 0) {
-    return NextResponse.json({ ok: false, error: 'Aucune spécialité valide', received: input.specialties }, { status: 400 })
+    return NextResponse.json(
+      { ok: false, error: 'Aucune spécialité valide', received: input.specialties },
+      { status: 400 }
+    )
   }
 
-  // Géocodage
+  // 3) géocodage
   const { lon, lat } = await geocode({
     address: input.address,
     postal_code: input.postal_code,
@@ -106,10 +120,13 @@ export async function POST(req: Request) {
     country: input.country,
   })
 
-  // Slug unique
+  // 4) slug unique (basé sur nom)
   const base = input.full_name
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)+/g, '')
   let slug = base || `ergo-${user.id.slice(0, 8)}`
   for (let i = 0; i < 5; i++) {
     const { data: exists } = await supabase.from('therapists').select('id').eq('slug', slug).maybeSingle()
@@ -117,27 +134,30 @@ export async function POST(req: Request) {
     slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
   }
 
-  // Transaction
+  // 5) transaction séquentielle avec upsert idempotent sur profile_id
   try {
-    // A) therapist
+    // A) therapists
     const { data: th, error: e1 } = await supabase
       .from('therapists')
-      .upsert({
-        slug,
-        profile_id: user.id,
-        full_name: input.full_name,
-        headline: input.headline ?? null,
-        email: user.email,
-        phone: input.phone ?? null,
-        website: null,
-        booking_url: input.booking_url ?? null,
-        price_hint: null,
-        price_min: input.price_min ?? null,
-        price_max: input.price_max ?? null,
-        price_unit: input.price_unit ?? null,
-        is_published: true,
-        is_approved: true,
-      }, { onConflict: 'profile_id' })
+      .upsert(
+        {
+          slug,
+          profile_id: user.id,
+          full_name: input.full_name,
+          headline: input.headline ?? null,
+          email: user.email,
+          phone: input.phone ?? null,
+          website: null,
+          booking_url: input.booking_url ?? null,
+          price_hint: null,
+          price_min: input.price_min ?? null,
+          price_max: input.price_max ?? null,
+          price_unit: input.price_unit ?? null,
+          is_published: true,
+          is_approved: true,
+        },
+        { onConflict: 'profile_id' }
+      )
       .select('id, slug')
       .single()
     if (e1) throw e1
@@ -145,7 +165,7 @@ export async function POST(req: Request) {
 
     // B) langues
     if (input.languages?.length) {
-      const rows = input.languages.map(code => ({ therapist_id, language_code: code }))
+      const rows = input.languages.map((code) => ({ therapist_id, language_code: code }))
       const { error: e2 } = await supabase
         .from('therapist_languages')
         .upsert(rows, { onConflict: 'therapist_id,language_code', ignoreDuplicates: true })
@@ -154,7 +174,7 @@ export async function POST(req: Request) {
 
     // C) spécialités
     if (cleanSpecialties.length) {
-      const rows = cleanSpecialties.map(slug => ({ therapist_id, specialty_slug: slug }))
+      const rows = cleanSpecialties.map((s) => ({ therapist_id, specialty_slug: s }))
       const { error: e3 } = await supabase
         .from('therapist_specialties')
         .upsert(rows, { onConflict: 'therapist_id,specialty_slug', ignoreDuplicates: true })
@@ -162,7 +182,7 @@ export async function POST(req: Request) {
     }
 
     // D) localisation
-    const coordsWkt = (lon != null && lat != null) ? `SRID=4326;POINT(${lon} ${lat})` : null
+    const coordsWkt = lon != null && lat != null ? `SRID=4326;POINT(${lon} ${lat})` : null
     const { data: locExists, error: locErr } = await supabase
       .from('therapist_locations')
       .select('id')
@@ -182,27 +202,23 @@ export async function POST(req: Request) {
       })
       if (e4) throw e4
     } else {
-      const { error: e5 } = await supabase.from('therapist_locations').update({
-        address: input.address,
-        city: input.city,
-        postal_code: input.postal_code,
-        country: input.country,
-        modes: input.modes ?? [],
-        coords: coordsWkt,
-      }).eq('id', locExists[0].id)
+      const { error: e5 } = await supabase
+        .from('therapist_locations')
+        .update({
+          address: input.address,
+          city: input.city,
+          postal_code: input.postal_code,
+          country: input.country,
+          modes: input.modes ?? [],
+          coords: coordsWkt,
+        })
+        .eq('id', locExists[0].id)
       if (e5) throw e5
     }
 
     return NextResponse.json({ ok: true, therapist_id, slug })
-  } catch (e: any) {
-    console.error('Onboard error:', e)
-    const payload: Record<string, any> = {
-      ok: false,
-      error: e?.message ?? 'Erreur',
-    }
-    if (e?.details) payload.details = e.details
-    if (e?.hint) payload.hint = e.hint
-    if (e?.code) payload.code = e.code
-    return NextResponse.json(payload, { status: 400 })
+  } catch (err: unknown) {
+    console.error('Onboard error:', err)
+    return NextResponse.json(serializeError(err), { status: 400 })
   }
 }
