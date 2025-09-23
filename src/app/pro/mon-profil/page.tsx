@@ -1,9 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { supabaseServer } from '@/lib/supabase'
-import OnboardForm from '@/components/ui/onboard-form'
-import EditBasics from '@/components/ui/edit-basics'
-import AccountSettings from '@/components/ui/account-settings' // ⬅️ nouveau
 
 export const dynamic = 'force-dynamic'
 
@@ -15,10 +12,10 @@ export default async function ProProfilePage() {
     redirect('/pro/connexion')
   }
 
-  // Récupère (ou pas) le thérapeute lié à ce compte
+  // Vérifie si l’ergo a déjà une fiche
   const { data: therapist } = await sb
     .from('therapists')
-    .select('id, slug, full_name, headline, phone, booking_url, is_published')
+    .select('slug')
     .eq('profile_id', user.id)
     .maybeSingle()
 
@@ -27,33 +24,35 @@ export default async function ProProfilePage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Mon espace</h1>
         {therapist?.slug && (
-          <Link href={`/ergo/${therapist.slug}`} className="btn">Voir ma fiche publique</Link>
+          <Link href={`/ergo/${therapist.slug}`} className="btn">
+            Voir ma fiche publique
+          </Link>
         )}
       </div>
 
-      {/* === 1) Compte de connexion (email + mot de passe) === */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-medium">Compte de connexion</h2>
-        <p className="text-sm text-neutral-600">
-          Gérez votre e-mail et votre mot de passe utilisés pour vous connecter.
-        </p>
-        <AccountSettings initialEmail={user.email ?? ''} />
-      </section>
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Lien vers compte de connexion */}
+        <div className="rounded-2xl border p-6 space-y-3">
+          <h2 className="text-lg font-medium">Compte de connexion</h2>
+          <p className="text-sm text-neutral-600">
+            Gérez votre e-mail et votre mot de passe utilisés pour vous connecter.
+          </p>
+          <Link href="/pro/compte" className="btn w-full">
+            Accéder
+          </Link>
+        </div>
 
-      {/* === 2) Profil ergothérapeute (fiche publique) === */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-medium">Profil ergothérapeute</h2>
-        {!therapist ? (
-          <>
-            <p className="text-sm text-neutral-700">
-              Bienvenue ! Complétez ces informations pour créer votre fiche visible dans la recherche.
-            </p>
-            <OnboardForm />
-          </>
-        ) : (
-          <EditBasics therapist={therapist} />
-        )}
-      </section>
+        {/* Lien vers compte ergo */}
+        <div className="rounded-2xl border p-6 space-y-3">
+          <h2 className="text-lg font-medium">Profil ergothérapeute</h2>
+          <p className="text-sm text-neutral-600">
+            Modifiez vos informations professionnelles visibles dans la recherche.
+          </p>
+          <Link href="/pro/compte-ergo" className="btn w-full">
+            Accéder
+          </Link>
+        </div>
+      </div>
     </main>
   )
 }
