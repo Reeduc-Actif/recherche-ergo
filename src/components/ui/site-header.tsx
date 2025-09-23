@@ -5,11 +5,13 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { Menu, X } from 'lucide-react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
+import type { User } from '@supabase/supabase-js'
+
 
 export default function SiteHeader() {
   const [open, setOpen] = useState(false)
   const pathname = usePathname()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   // Charger l'utilisateur depuis Supabase (cookies)
   useEffect(() => {
