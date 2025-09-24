@@ -3,13 +3,16 @@
 import { useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
+function hasMessage(x: unknown): x is { message: unknown } {
+  return typeof x === 'object' && x !== null && 'message' in x
+}
+
 function getErrorMessage(e: unknown, fallback = 'Une erreur est survenue.') {
   if (e instanceof Error) return e.message
-  if (typeof e === 'object' && e && 'message' in e && typeof (e as any).message === 'string') {
-    return String((e as { message?: string }).message)
-  }
+  if (hasMessage(e) && typeof e.message === 'string') return e.message
   return fallback
 }
+
 
 export default function AccountSettings({ initialEmail }: { initialEmail: string }) {
   const sb = supabaseBrowser()

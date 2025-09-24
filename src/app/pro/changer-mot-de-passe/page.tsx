@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
+function hasMessage(x: unknown): x is { message: unknown } {
+  return typeof x === 'object' && x !== null && 'message' in x
+}
+
 function getErrorMessage(e: unknown, fallback = 'Impossible de mettre à jour le mot de passe.') {
   if (e instanceof Error) return e.message
-  if (typeof e === 'object' && e && 'message' in e && typeof (e as any).message === 'string') {
-    return String((e as { message?: string }).message)
-  }
+  if (hasMessage(e) && typeof e.message === 'string') return e.message
   return fallback
 }
 
