@@ -15,12 +15,14 @@ function getErrorMessage(e: unknown, fallback = 'Impossible de mettre à jour le
 export default function ProChangePasswordPage() {
   const sb = supabaseBrowser()
   const router = useRouter()
+
   const [pwd1, setPwd1] = useState('')
   const [pwd2, setPwd2] = useState('')
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
+  // Vérifie qu’une session a bien été posée par /auth/callback
   useEffect(() => {
     sb.auth.getSession().then(({ data }) => {
       if (!data.session) setErr('Lien invalide ou expiré. Recommencez la procédure.')
@@ -29,7 +31,9 @@ export default function ProChangePasswordPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setErr(null); setMsg(null)
+    setErr(null)
+    setMsg(null)
+
     if (!pwd1 || !pwd2) { setErr('Saisissez un nouveau mot de passe.'); return }
     if (pwd1 !== pwd2) { setErr('Les mots de passe ne correspondent pas.'); return }
     if (pwd1.length < 8) { setErr('8 caractères minimum.'); return }
@@ -52,3 +56,32 @@ export default function ProChangePasswordPage() {
       <h1 className="text-2xl font-semibold">Définir un nouveau mot de passe</h1>
       <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border p-4">
         <div>
+          <label className="mb-1 block text-sm">Nouveau mot de passe</label>
+          <input
+            type="password"
+            className="input"
+            value={pwd1}
+            onChange={(e) => setPwd1(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm">Confirmer</label>
+          <input
+            type="password"
+            className="input"
+            value={pwd2}
+            onChange={(e) => setPwd2(e.target.value)}
+          />
+        </div>
+
+        <button disabled={loading} className="btn w-full">
+          {loading ? 'Mise à jour…' : 'Enregistrer'}
+        </button>
+
+        {msg && <p className="text-sm text-green-700">{msg}</p>}
+        {err && <p className="text-sm text-red-700">{err}</p>}
+      </form>
+    </main>
+  )
+}
