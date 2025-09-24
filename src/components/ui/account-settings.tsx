@@ -3,11 +3,19 @@
 import { useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
+function getErrorMessage(e: unknown, fallback = 'Une erreur est survenue.') {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'object' && e && 'message' in e && typeof (e as any).message === 'string') {
+    return String((e as { message?: string }).message)
+  }
+  return fallback
+}
+
 export default function AccountSettings({ initialEmail }: { initialEmail: string }) {
   const sb = supabaseBrowser()
 
-  // Email
-  const [email, setEmail] = useState(initialEmail)
+  // Email (pas besoin d’état si juste affichage)
+  const email = initialEmail
   const [newEmail, setNewEmail] = useState('')
   const [emailMsg, setEmailMsg] = useState<string | null>(null)
   const [emailErr, setEmailErr] = useState<string | null>(null)
@@ -26,21 +34,15 @@ export default function AccountSettings({ initialEmail }: { initialEmail: string
     if (!newEmail || newEmail === email) { setEmailErr('Indiquez un nouvel e-mail différent.'); return }
     setEmailLoading(true)
     try {
-      const { data: sessionData } = await sb.auth.getSession()
       const origin = window.location.origin
-
-      // Déclenche la confirmation vers le NOUVEL email
-      const { error } = await sb.auth.updateUser(
-        { email: newEmail },
-        {
-          emailRedirectTo: `${origin}/auth/callback?next=/pro/compte`,
-        } as any // compat optionnel selon version supabase-js
-      )
+      const options: { emailRedirectTo?: string } = {
+        emailRedirectTo: `${origin}/auth/callback?next=/pro/compte`,
+      }
+      const { error } = await sb.auth.updateUser({ email: newEmail }, options)
       if (error) throw error
-
       setEmailMsg('E-mail envoyé. Confirmez via le lien reçu sur la nouvelle adresse.')
-    } catch (e: any) {
-      setEmailErr(e?.message ?? 'Impossible de changer l’e-mail.')
+    } catch (e: unknown) {
+      setEmailErr(getErrorMessage(e, 'Impossible de changer l’e-mail.'))
     } finally {
       setEmailLoading(false)
     }
@@ -54,23 +56,23 @@ export default function AccountSettings({ initialEmail }: { initialEmail: string
     if (pwd1.length < 8) { setPwdErr('8 caractères minimum.'); return }
     setPwdLoading(true)
     try {
-      // 1) Re-vérifier l’identité en réessayant la connexion (ne change rien au compte)
       const { data: me } = await sb.auth.getUser()
-      if (!me.user?.email) throw new Error('Session invalide.')
+      const currentEmail = me.user?.email
+      if (!currentEmail) throw new Error('Session invalide.')
+
       const { error: signInError } = await sb.auth.signInWithPassword({
-        email: me.user.email,
+        email: currentEmail,
         password: currentPwd,
       })
       if (signInError) throw new Error('Mot de passe actuel incorrect.')
 
-      // 2) Mettre à jour le mot de passe
       const { error } = await sb.auth.updateUser({ password: pwd1 })
       if (error) throw error
 
       setPwdMsg('Mot de passe mis à jour.')
       setCurrentPwd(''); setPwd1(''); setPwd2('')
-    } catch (e: any) {
-      setPwdErr(e?.message ?? 'Impossible de mettre à jour le mot de passe.')
+    } catch (e: unknown) {
+      setPwdErr(getErrorMessage(e, 'Impossible de mettre à jour le mot de passe.'))
     } finally {
       setPwdLoading(false)
     }

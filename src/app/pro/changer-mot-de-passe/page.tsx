@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
+function getErrorMessage(e: unknown, fallback = 'Impossible de mettre à jour le mot de passe.') {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'object' && e && 'message' in e && typeof (e as any).message === 'string') {
+    return String((e as { message?: string }).message)
+  }
+  return fallback
+}
+
 export default function ProChangePasswordPage() {
   const sb = supabaseBrowser()
   const router = useRouter()
@@ -32,8 +40,8 @@ export default function ProChangePasswordPage() {
       if (error) throw error
       setMsg('Mot de passe mis à jour. Redirection…')
       setTimeout(() => router.replace('/pro/mon-profil'), 1000)
-    } catch (e: any) {
-      setErr(e?.message ?? 'Impossible de mettre à jour le mot de passe.')
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e))
     } finally {
       setLoading(false)
     }
@@ -44,19 +52,3 @@ export default function ProChangePasswordPage() {
       <h1 className="text-2xl font-semibold">Définir un nouveau mot de passe</h1>
       <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border p-4">
         <div>
-          <label className="mb-1 block text-sm">Nouveau mot de passe</label>
-          <input type="password" className="input" value={pwd1} onChange={e => setPwd1(e.target.value)} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm">Confirmer</label>
-          <input type="password" className="input" value={pwd2} onChange={e => setPwd2(e.target.value)} />
-        </div>
-        <button disabled={loading} className="btn w-full">
-          {loading ? 'Mise à jour…' : 'Enregistrer'}
-        </button>
-        {msg && <p className="text-sm text-green-700">{msg}</p>}
-        {err && <p className="text-sm text-red-700">{err}</p>}
-      </form>
-    </main>
-  )
-}
