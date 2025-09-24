@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { supabaseServer } from '@/lib/supabase'
+import LogoutButton from '@/components/ui/logout-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,8 +22,13 @@ export default async function ProProfilePage() {
 
   return (
     <main className="mx-auto max-w-3xl space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Mon espace</h1>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold">Mon espace</h1>
+          {/* Bouton de déconnexion (compact en desktop, visible aussi en mobile) */}
+          <LogoutButton className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" />
+        </div>
+
         {therapist?.slug && (
           <Link href={`/ergo/${therapist.slug}`} className="btn">
             Voir ma fiche publique
