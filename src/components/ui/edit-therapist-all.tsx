@@ -42,11 +42,9 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
   const [fullName, setFullName] = useState(therapist.full_name ?? '')
   const [headline, setHeadline] = useState(therapist.headline ?? '')
   const [bio, setBio] = useState(therapist.bio ?? '')
-  const [email, setEmail] = useState(therapist.email ?? '')
   const [phone, setPhone] = useState(therapist.phone ?? '')
   const [website, setWebsite] = useState(therapist.website ?? '')
   const [bookingUrl, setBookingUrl] = useState(therapist.booking_url ?? '')
-  const [priceHint, setPriceHint] = useState(therapist.price_hint ?? '')
   const [isPublished, setIsPublished] = useState(Boolean(therapist.is_published))
   const [priceMin, setPriceMin] = useState<string>(therapist.price_min?.toString() ?? '')
   const [priceMax, setPriceMax] = useState<string>(therapist.price_max?.toString() ?? '')
@@ -147,11 +145,9 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         full_name: fullName.trim(),
         headline: headline.trim() || null,
         bio: bio.trim() || null,
-        email: email.trim() || null,
         phone: phone.trim() || null,
         website: website.trim() || null,
         booking_url: bookingUrl.trim() || null,
-        price_hint: priceHint.trim() || null,
         is_published: isPublished,
         price_min: minNum,
         price_max: maxNum,

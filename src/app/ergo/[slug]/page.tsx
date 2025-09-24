@@ -1,7 +1,10 @@
 import { supabaseServer } from '@/lib/supabase'
 import Link from 'next/link'
-import MapCard from '@/components/ui/map-card' // ✅ garde UNIQUEMENT ceci
+import dynamic from 'next/dynamic'
+import MapCard from '@/components/ui/map-card'
 
+// Lazy (évite d’embarquer Mapbox si pas d’adresse)
+const MapCard = dynamic(() => import('@/components/ui/map-card'), { ssr: false })
 
 type Params = { slug: string }
 
@@ -286,7 +289,7 @@ function buildJsonLd(input: {
   price?: string
   bookingUrl?: string
 }) {
-  const ld: any = {
+  const ld: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'MedicalBusiness',
     name: input.name,
