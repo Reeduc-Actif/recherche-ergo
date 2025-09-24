@@ -1,10 +1,7 @@
 import { supabaseServer } from '@/lib/supabase'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
-import MapCard from '@/components/ui/map-card'
+import MapCard from '@/components/ui/map-card' // ✅ garde UNIQUEMENT ceci
 
-// Lazy (évite d’embarquer Mapbox si pas d’adresse)
-const MapCard = dynamic(() => import('@/components/ui/map-card'), { ssr: false })
 
 type Params = { slug: string }
 
