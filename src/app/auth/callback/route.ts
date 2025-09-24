@@ -35,6 +35,11 @@ export async function GET(req: Request) {
     if (code) {
         await supabase.auth.exchangeCodeForSession(code)
     }
+    // Exige un code pour éviter les redirections silencieuses
+    if (!code) {
+        return NextResponse.redirect(new URL('/pro/connexion?error=missing_code', requestUrl.origin))
+    }
+    await supabase.auth.exchangeCodeForSession(code)
 
     return res
 }

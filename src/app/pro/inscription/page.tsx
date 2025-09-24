@@ -27,10 +27,10 @@ export default function ProSignup() {
         try {
             const origin = window.location.origin
             const { error } = await sb.auth.signUp({
-                email: form.email,
+                email: form.email.trim().toLowerCase(),
                 password: form.password,
                 options: {
-                    emailRedirectTo: `${origin}/pro/mon-profil`,
+                    emailRedirectTo: `${origin}/auth/callback?next=/pro/mon-profil`,
                     data: {
                         full_name: `${form.first_name} ${form.last_name}`.trim(),
                         phone: form.phone,

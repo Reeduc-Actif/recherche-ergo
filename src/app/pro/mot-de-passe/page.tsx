@@ -18,7 +18,7 @@ export default function ProForgotPasswordPage() {
         try {
             const origin = window.location.origin
             const { error } = await sb.auth.resetPasswordForEmail(email, {
-                redirectTo: `${origin}/pro/changer-mot-de-passe`,
+                redirectTo: `${origin}/auth/callback?next=/pro/changer-mot-de-passe`,
             })
             if (error) throw error
             setMsg('E-mail envoyé. Ouvrez le lien reçu pour définir un nouveau mot de passe.')

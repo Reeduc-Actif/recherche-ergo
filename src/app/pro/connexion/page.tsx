@@ -79,7 +79,7 @@ export default function ProLoginPage() {
         try {
             const origin = window.location.origin
             const { error } = await sb.auth.resetPasswordForEmail(email, {
-                redirectTo: `${origin}/auth/callback?next=/pro/mon-profil`,
+                redirectTo: `${origin}/auth/callback?next=/pro/changer-mot-de-passe`,
             })
             if (error) throw error
             setOk('E-mail de réinitialisation envoyé.')
