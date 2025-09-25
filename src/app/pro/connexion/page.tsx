@@ -29,7 +29,8 @@ export default function ProLoginPage() {
         if (!email || !password) { setErr('E-mail et mot de passe requis.'); return }
         setLoadingPwd(true)
         try {
-            const { error } = await sb.auth.signInWithPassword({ email, password })
+            const emailNorm = email.trim().toLowerCase()
+            const { error } = await sb.auth.signInWithPassword({ email: emailNorm, password })
             if (error) throw error
 
             // Sync cookies côté serveur (indispensable pour pages SSR)

@@ -14,7 +14,7 @@ export default async function ProComptePage() {
     <main className="mx-auto max-w-3xl space-y-6">
       <h1 className="text-2xl font-semibold">Mon compte</h1>
       <p className="text-sm text-neutral-600">Gérez votre e-mail et votre mot de passe de connexion.</p>
-      <AccountSettings initialEmail={user.email ?? ''} />
+      <AccountSettings />
     </main>
   )
 }
