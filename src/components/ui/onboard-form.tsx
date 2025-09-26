@@ -368,8 +368,8 @@ export default function OnboardForm() {
               <div>
                 <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
                 <CommunePicker
-                  value={loc.communes}
-                  onChange={(codes) => updateLoc(idx, { communes: codes })}
+                  value={loc.communes ?? []}
+                  onChange={(codes) => updateLoc(idx, { communes: codes } as Partial<{ communes: string[] }>)} 
                 />
               </div>
             )}
