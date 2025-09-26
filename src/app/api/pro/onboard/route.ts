@@ -127,7 +127,6 @@ export async function POST(req: Request) {
 
     // 4.1 Insert cabinets
     const cabinets = p.locations.filter(l => l.mode === 'cabinet') as z.infer<typeof CabinetZ>[]
-    let insertedCabinetIds: number[] = []
     if (cabinets.length) {
       const { data: ins } = await sb
         .from('therapist_locations')
@@ -150,11 +149,11 @@ export async function POST(req: Request) {
           }))
         )
         .select('id')
-      insertedCabinetIds = (ins ?? []).map(x => x.id)
+      const _insertedCabinetIds = (ins ?? []).map((x: { id: number }) => x.id)
     }
 
     // 4.2 Insert zones à domicile
-    const domiciles = p.locations.filter(l => l.mode === 'domicile') as z.infer<typeof DomicileZ>[]
+  const domiciles = p.locations.filter((l: any) => l.mode === 'domicile') as z.infer<typeof DomicileZ>[]
     if (domiciles.length) {
       // une ligne par zone
       const { data: insLocs } = await sb

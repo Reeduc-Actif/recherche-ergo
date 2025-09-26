@@ -167,8 +167,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, results })
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[API /api/search] Fatal:', e)
+  console.error('[API /api/search] Fatal:', e)
     const message = e instanceof Error ? e.message : 'Server error'
     return NextResponse.json({ ok: false, error: message, results: [] as ApiRow[] }, { status: 500 })
   }

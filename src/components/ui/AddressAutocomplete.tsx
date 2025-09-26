@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useId } from 'react'
 
 export type AddressSuggestion = {
   label: string
@@ -46,6 +46,7 @@ export default function AddressAutocomplete({
   const ref = useRef<HTMLDivElement | null>(null)
   const timer = useRef<number | null>(null)
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+  const listId = useId()
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -71,10 +72,10 @@ export default function AddressAutocomplete({
       url.searchParams.set('access_token', token)
 
       const res = await fetch(url.toString())
-      const json = await res.json() as { features?: MapboxFeature[] }
-      const features = json.features ?? []
+  const json = await res.json() as { features?: MapboxFeature[] }
+  const features: MapboxFeature[] = json.features ?? []
 
-      const out: AddressSuggestion[] = features.map((f) => {
+  const out: AddressSuggestion[] = features.map((f: MapboxFeature) => {
         const [lon, lat] = f.center
         const ctx = f.context ?? []
         const city = ctx.find(c => c.id.startsWith('place'))?.text
@@ -84,8 +85,9 @@ export default function AddressAutocomplete({
         const label = f.place_name
         const address = label.split(',')[0]?.trim() || label
         // Mapbox sometimes exposes house number in properties.address and street in text
-        const house_number = (f.properties && (f.properties as any).address) || undefined
-        const street = (f.text) || (f.properties && (f.properties as any).street) || undefined
+        const props = (f.properties ?? {}) as Record<string, unknown>
+        const house_number = typeof props['address'] === 'string' ? (props['address'] as string) : undefined
+        const street = f.text ?? (typeof props['street'] === 'string' ? (props['street'] as string) : undefined)
 
         return {
           label,
@@ -114,15 +116,16 @@ export default function AddressAutocomplete({
       <input
         className="input w-full"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         onFocus={() => { if (opts.length > 0) setOpen(true) }}
         placeholder={placeholder}
         role="combobox"
         aria-expanded={open}
+        aria-controls={listId}
       />
       {open && opts.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow">
-          {opts.map((s, i) => (
+        <div id={listId} className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow">
+          {opts.map((s: AddressSuggestion, i: number) => (
             <button
               key={`${s.lon},${s.lat},${i}`}
               type="button"
