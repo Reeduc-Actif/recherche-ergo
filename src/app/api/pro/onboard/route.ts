@@ -23,7 +23,7 @@ const DomicileZ = z.object({
   id: z.number().optional(),
   mode: z.literal('domicile'),
   country: z.literal('BE'),
-  communes: z.array(z.string().min(1)).nonempty(), // codes NIS
+  cities: z.array(z.string().min(1)).nonempty(), // codes INSEE
 })
 
 const LocationZ = z.discriminatedUnion('mode', [CabinetZ, DomicileZ])
@@ -121,7 +121,7 @@ export async function POST(req: Request) {
 
     const oldIds = (oldLocs ?? []).map(l => l.id)
     if (oldIds.length) {
-      await sb.from('therapist_location_communes').delete().in('location_id', oldIds)
+      await sb.from('therapist_location_cities').delete().in('location_id', oldIds)
       await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
     }
 
@@ -171,14 +171,14 @@ export async function POST(req: Request) {
           }))
         )
         .select('id')
-
-      const domicileIds = (insLocs ?? []).map((x, i) => ({ id: x.id, communes: domiciles[i].communes }))
-      // communes pour chaque location
-      const rows = domicileIds.flatMap(d =>
-        d.communes.map(code => ({ location_id: d.id, commune_code: code }))
+      const ins = (insLocs ?? []) as { id: number }[]
+      const domicileIds = ins.map((x: { id: number }, i: number) => ({ id: x.id, cities: domiciles[i].cities }))
+      // cities (INSEE) pour chaque location
+      const rows = domicileIds.flatMap((d: { id: number; cities: string[] }) =>
+        d.cities.map((code: string) => ({ location_id: d.id, city_insee: code }))
       )
       if (rows.length) {
-        await sb.from('therapist_location_communes').insert(rows)
+        await sb.from('therapist_location_cities').insert(rows)
       }
     }
 

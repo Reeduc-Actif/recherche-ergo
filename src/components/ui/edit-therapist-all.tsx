@@ -156,11 +156,12 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
             .from('therapist_location_cities')
             .select('city_insee')
             .eq('location_id', l.id)
+          const rows = (tlc ?? []) as TLCRow[]
           drafts.push({
             id: l.id,
             mode: 'domicile',
             country: countryBE,
-            cities: (tlc ?? []).map((x: any) => x.city_insee),
+            cities: rows.map(x => x.city_insee),
           })
         }
         if (modes.includes('cabinet')) {
