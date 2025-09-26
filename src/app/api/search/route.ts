@@ -6,7 +6,6 @@ import { supabaseServer } from '@/lib/supabase'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// On garde la charge utile minimale ; lat/lng ignorés pour l’instant (Belgique entière)
 const Payload = z.object({
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
@@ -17,7 +16,30 @@ const Payload = z.object({
 
 type Mode = 'cabinet' | 'domicile'
 
-type Row = {
+// Row tel que renvoyé par la jointure Supabase (locations + therapists)
+type JoinedTherapist = {
+  id: string
+  slug: string
+  full_name: string
+  headline: string | null
+  booking_url: string | null
+  is_published: boolean | null
+}
+
+type JoinedLocation = {
+  id: number
+  therapist_id: string
+  address: string | null
+  city: string | null
+  postal_code: string | null
+  country: string | null
+  modes: string[] | null
+  lon: number | null
+  lat: number | null
+  therapists: JoinedTherapist | null
+}
+
+type ApiRow = {
   therapist_id: string
   slug: string
   full_name: string
@@ -28,7 +50,6 @@ type Row = {
   city: string | null
   postal_code: string | null
   modes: string[] | null
-  // distance_m ignorée (pas de rayon)
   lon: number | null
   lat: number | null
   languages: string[] | null
@@ -37,19 +58,18 @@ type Row = {
 export async function POST(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
-    const mode: Mode =
-      (searchParams.get('mode') === 'domicile' ? 'domicile' : 'cabinet')
+    const mode: Mode = searchParams.get('mode') === 'domicile' ? 'domicile' : 'cabinet'
 
     const body = await req.json().catch(() => ({}))
     const parsed = Payload.safeParse(body)
     if (!parsed.success) {
-      return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] as Row[] }, { status: 400 })
+      return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] as ApiRow[] }, { status: 400 })
     }
     const { specialties_filter, languages_filter } = parsed.data
 
     const supabase = await supabaseServer()
 
-    // 1) Filtre langues (liste des therapist_id)
+    // 1) Filtre langues
     let therapistIdsByLang: string[] | null = null
     if (languages_filter?.length) {
       const { data: langs, error: langErr } = await supabase
@@ -61,7 +81,7 @@ export async function POST(req: Request) {
       therapistIdsByLang = Array.from(new Set((langs ?? []).map(r => r.therapist_id)))
     }
 
-    // 2) Filtre spécialités (liste des therapist_id)
+    // 2) Filtre spécialités
     let therapistIdsBySpec: string[] | null = null
     if (specialties_filter?.length) {
       const { data: specs, error: specErr } = await supabase
@@ -73,7 +93,7 @@ export async function POST(req: Request) {
       therapistIdsBySpec = Array.from(new Set((specs ?? []).map(r => r.therapist_id)))
     }
 
-    // 3) Intersection éventuelle des deux filtres
+    // 3) Intersection éventuelle
     let therapistFilter: string[] | null = null
     if (therapistIdsByLang && therapistIdsBySpec) {
       const set = new Set(therapistIdsByLang)
@@ -82,8 +102,7 @@ export async function POST(req: Request) {
       therapistFilter = therapistIdsByLang ?? therapistIdsBySpec ?? null
     }
 
-    // 4) Jointure therapists + therapist_locations (filtrage par mode)
-    //    On ne fait pas de distance ; on renvoie tout en Belgique.
+    // 4) Requête principale
     let q = supabase
       .from('therapist_locations')
       .select(`
@@ -106,44 +125,44 @@ export async function POST(req: Request) {
         )
       `)
       .eq('country', 'BE')
-
-    // filtre “mode” (modes est text[])
-    q = q.contains('modes', [mode])
+      .contains('modes', [mode])
 
     if (therapistFilter && therapistFilter.length) {
       q = q.in('therapist_id', therapistFilter)
     }
 
-    // uniquement profils publiés
-    // (filtre via la jointure inner déjà, mais on s’assure)
-    const { data: locs, error: locErr } = await q
+    const { data: locsData, error: locErr } = await q
     if (locErr) throw locErr
 
-    // 5) mise en forme
-    const results: Row[] = (locs ?? [])
-      .filter((r: any) => r.therapists?.is_published) // sécurité
-      .map((r: any) => ({
-        therapist_id: r.therapist_id,
-        slug: r.therapists.slug,
-        full_name: r.therapists.full_name,
-        headline: r.therapists.headline,
-        booking_url: r.therapists.booking_url,
-        location_id: r.id,
-        address: r.address,
-        city: r.city,
-        postal_code: r.postal_code,
-        modes: r.modes ?? null,
-        lon: typeof r.lon === 'number' ? r.lon : null,
-        lat: typeof r.lat === 'number' ? r.lat : null,
-        languages: null, // (optionnel: on peut les recharger si besoin)
-      }))
+    const locs = (locsData ?? []) as JoinedLocation[]
+
+    // 5) Mise en forme typée (plus de `any`)
+    const results: ApiRow[] = locs
+      .filter((r) => Boolean(r.therapists?.is_published))
+      .map((r) => {
+        const t = r.therapists!
+        return {
+          therapist_id: r.therapist_id,
+          slug: t.slug,
+          full_name: t.full_name,
+          headline: t.headline,
+          booking_url: t.booking_url,
+          location_id: r.id,
+          address: r.address,
+          city: r.city,
+          postal_code: r.postal_code,
+          modes: r.modes ?? null,
+          lon: typeof r.lon === 'number' ? r.lon : null,
+          lat: typeof r.lat === 'number' ? r.lat : null,
+          languages: null,
+        }
+      })
 
     return NextResponse.json({ ok: true, results })
   } catch (e) {
-    // Log côté serveur pour que tu voies l'erreur exacte dans Vercel/terminal
     console.error('[API /api/search] Fatal:', e)
     const message = e instanceof Error ? e.message : 'Server error'
-    return NextResponse.json({ ok: false, error: message, results: [] }, { status: 500 })
+    return NextResponse.json({ ok: false, error: message, results: [] as ApiRow[] }, { status: 500 })
   }
 }
 
