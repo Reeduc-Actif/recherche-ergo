@@ -44,6 +44,10 @@ const Payload = z.object({
   locations: z.array(LocationZ).min(1),
 })
 
+type Cabinet = z.infer<typeof CabinetZ>
+type Domicile = z.infer<typeof DomicileZ>
+type Location = z.infer<typeof LocationZ>
+
 // --------- Helpers ---------
 function toWKT(lon?: number, lat?: number): string | null {
   if (typeof lon === 'number' && typeof lat === 'number') {
@@ -101,7 +105,7 @@ export async function POST(req: Request) {
     await sb.from('therapist_languages').delete().eq('therapist_id', therapistId)
     if (p.languages?.length) {
       await sb.from('therapist_languages').insert(
-        p.languages.map(code => ({ therapist_id: therapistId, language_code: code }))
+        p.languages.map((code: string) => ({ therapist_id: therapistId, language_code: code }))
       )
     }
 
@@ -109,7 +113,7 @@ export async function POST(req: Request) {
     await sb.from('therapist_specialties').delete().eq('therapist_id', therapistId)
     if (p.specialties?.length) {
       await sb.from('therapist_specialties').insert(
-        p.specialties.map(slug => ({ therapist_id: therapistId, specialty_slug: slug }))
+        p.specialties.map((slug: string) => ({ therapist_id: therapistId, specialty_slug: slug }))
       )
     }
 
@@ -119,19 +123,19 @@ export async function POST(req: Request) {
       .select('id')
       .eq('therapist_id', therapistId)
 
-    const oldIds = (oldLocs ?? []).map(l => l.id)
+  const oldIds = ((oldLocs ?? []) as { id: number }[]).map((l: { id: number }) => l.id)
     if (oldIds.length) {
       await sb.from('therapist_location_cities').delete().in('location_id', oldIds)
       await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
     }
 
     // 4.1 Insert cabinets
-    const cabinets = p.locations.filter(l => l.mode === 'cabinet') as z.infer<typeof CabinetZ>[]
+  const cabinets = (p.locations.filter((l: Location) => l.mode === 'cabinet') as Cabinet[])
     if (cabinets.length) {
       const { data: ins } = await sb
         .from('therapist_locations')
         .insert(
-          cabinets.map(c => ({
+          cabinets.map((c: Cabinet) => ({
             therapist_id: therapistId,
             address: c.address,
             postal_code: c.postal_code,
@@ -149,17 +153,18 @@ export async function POST(req: Request) {
           }))
         )
         .select('id')
-      const _insertedCabinetIds = (ins ?? []).map((x: { id: number }) => x.id)
+      // we don't need the inserted ids for now; avoid unused var
+      void ins
     }
 
     // 4.2 Insert zones à domicile
-  const domiciles = p.locations.filter((l: any) => l.mode === 'domicile') as z.infer<typeof DomicileZ>[]
+  const domiciles = p.locations.filter((l: Location): l is Domicile => l.mode === 'domicile')
     if (domiciles.length) {
       // une ligne par zone
       const { data: insLocs } = await sb
         .from('therapist_locations')
         .insert(
-          domiciles.map(d => ({
+          domiciles.map((d: Domicile) => ({
             therapist_id: therapistId,
             address: null,
             postal_code: null,
