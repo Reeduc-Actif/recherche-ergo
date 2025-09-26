@@ -75,11 +75,9 @@ export async function POST(req: Request) {
   })
 
   if (error) {
-    // garder ce log pour diagnostiquer côté serveur
-    // eslint-disable-next-line no-console
     console.error('[RPC search_therapists]', error)
-    return NextResponse.json({ ok: false, error: error.message, results: [] as Result[] }, { status: 500 })
-  }
+    return NextResponse.json({ ok: false, error: error.message, results: [] }, { status: 500 })
+    }
 
   const rows = (rpcData ?? []) as RpcRow[]
 
