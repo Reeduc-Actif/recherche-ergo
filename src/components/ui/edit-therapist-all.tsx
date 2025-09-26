@@ -270,8 +270,9 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API (onboard)')
 
       setMsg('Profil ergothérapeute mis à jour !')
-    } catch (e) {
-      setErr((e as { message?: string })?.message ?? 'Mise à jour impossible.')
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Mise à jour impossible.'
+      setErr(message)
     } finally {
       setSaving(false)
     }

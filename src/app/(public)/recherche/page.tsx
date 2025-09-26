@@ -110,36 +110,53 @@ function SearchPageInner() {
   const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
   const [mode, setMode] = useState<Mode>(urlMode === 'domicile' ? 'domicile' : 'cabinet')
 
-  const updateUrl = useCallback((m: Mode = mode, specs = selectedSpecs, langs = selectedLangs) => {
+  const updateUrl = useCallback(() => {
+    const m = mapRef.current
+    if (!m) return
+    const c = m.getCenter()
     const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
-    sp.set('mode', m)
-    if (specs.length) sp.set('spec', specs.join(',')); else sp.delete('spec')
-    if (langs.length) sp.set('langs', langs.join(',')); else sp.delete('langs')
+    sp.set('mode', mode)
+    sp.set('lat', c.lat.toFixed(6))
+    sp.set('lng', c.lng.toFixed(6))
+    sp.set('r', String(radiusRef.current))
+    if (selectedSpecs.length) sp.set('spec', selectedSpecs.join(','))
+    else sp.delete('spec')
+    if (selectedLangs.length) sp.set('langs', selectedLangs.join(','))
+    else sp.delete('langs')
     router.replace(`${pathname}?${sp.toString()}`)
-  }, [pathname, router, selectedSpecs, selectedLangs, mode])
+  }, [mode, pathname, router, selectedLangs, selectedSpecs])
 
-  // Appelle l’API sans lat/lng → tout le pays
-  const fetchResults = useCallback(async (m: Mode = mode, specs = selectedSpecs, langs = selectedLangs) => {
-    try {
-      setLoading(true)
-      const url = new URL('/api/search', window.location.origin)
+  // Fetch résultats
+  const fetchResults = useCallback(
+    async () => {
+      try {
+        const m = mapRef.current
+        if (!m) return
+        setLoading(true)
+        const c = m.getCenter()
+        const url = new URL('/api/search', window.location.origin)
         url.searchParams.set('mode', mode)
         const res = await fetch(url.toString(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            lat: c.lat,
+            lng: c.lng,
+            radius_km: radiusRef.current,
             specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
             languages_filter: selectedLangs.length ? selectedLangs : undefined,
-        }),
+          }),
         })
-      const json = (await res.json()) as { ok?: boolean; results?: Result[] }
-      setResults(json.ok && json.results ? json.results : [])
-    } catch {
-      setResults([])
-    } finally {
-      setLoading(false)
-    }
-  }, [selectedSpecs, selectedLangs, mode])
+        const json = (await res.json()) as { ok?: boolean; results?: Result[] }
+        setResults(json.ok && json.results ? json.results : [])
+      } catch {
+        setResults([])
+      } finally {
+        setLoading(false)
+      }
+    },
+    [mode, selectedLangs, selectedSpecs],
+  )
 
   // Init carte
   useEffect(() => {
@@ -160,8 +177,8 @@ function SearchPageInner() {
     const onLoad = async () => {
       m.resize()
       m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 }) // Belgique
-      await fetchResults(mode, selectedSpecs, selectedLangs)
-      updateUrl(mode, selectedSpecs, selectedLangs)
+      await fetchResults()
+      updateUrl()
     }
 
     m.on('load', onLoad)
@@ -176,8 +193,8 @@ function SearchPageInner() {
 
   // Filtres / mode → relance (pas de moveend/refetch)
   useEffect(() => {
-    fetchResults(mode, selectedSpecs, selectedLangs)
-    updateUrl(mode, selectedSpecs, selectedLangs)
+    fetchResults()
+    updateUrl()
   }, [mode, selectedSpecs, selectedLangs, fetchResults, updateUrl])
 
   // Marqueurs + popups

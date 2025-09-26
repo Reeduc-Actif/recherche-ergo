@@ -211,7 +211,7 @@ export default function OnboardForm() {
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API')
       setOk('Profil créé ! Vous pouvez maintenant voir votre fiche publique.')
       // window.location.assign(`/ergo/${json.slug}`)
-    } catch (e) {
+    } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Erreur inconnue')
     } finally {
       setLoading(false)

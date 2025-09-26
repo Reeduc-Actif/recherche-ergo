@@ -2,11 +2,11 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
+import type * as GeoJSON from 'geojson' // ✅ pour typer coverage_geojson
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// --- Validation du payload ---
 const Payload = z.object({
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
@@ -32,15 +32,14 @@ type RpcRow = {
   lon: number | null
   lat: number | null
   languages: string[] | null
-  // optionnels si ta vue/RPC les renvoie
+  // ✅ on précise les types optionnels
   coverage_radius_km?: number | null
-  coverage_geojson?: unknown | null
+  coverage_geojson?: GeoJSON.Feature | GeoJSON.FeatureCollection | null
 }
 
 type Result = RpcRow
 
 export async function POST(req: Request) {
-  // query param `mode=cabinet|domicile` depuis l’URL
   const { searchParams } = new URL(req.url)
   const mode = z.enum(['cabinet', 'domicile']).optional().catch(undefined).parse(searchParams.get('mode') || undefined)
 
@@ -52,15 +51,12 @@ export async function POST(req: Request) {
 
   const { lat, lng, radius_km, specialties_filter, languages_filter } = parsed.data
 
-  // normalisation langues
   const langsNorm =
     Array.isArray(languages_filter)
       ? languages_filter.map((v) => String(v).toLowerCase()).filter((v) => ALLOWED_LANGS.has(v))
       : null
 
   const supabase = await supabaseServer()
-
-  // On passe le mode comme filtre à la RPC (équivaut à loc.modes @> ARRAY[mode])
   const in_modes = mode ? [mode] : null
 
   const { data: rpcData, error } = await supabase.rpc('search_therapists', {
@@ -73,11 +69,13 @@ export async function POST(req: Request) {
   })
 
   if (error) {
+    // eslint-disable-next-line no-console
     console.error('[RPC search_therapists]', error)
     return NextResponse.json({ ok: false, error: error.message, results: [] as Result[] }, { status: 500 })
   }
 
   const rows = (rpcData ?? []) as RpcRow[]
+
   const results: Result[] = rows.map((r) => ({
     therapist_id: r.therapist_id,
     slug: r.slug,
@@ -93,14 +91,14 @@ export async function POST(req: Request) {
     lon: r.lon,
     lat: r.lat,
     languages: r.languages ?? null,
-    coverage_radius_km: (r as any).coverage_radius_km ?? null,
-    coverage_geojson: (r as any).coverage_geojson ?? null,
+    // ✅ plus de `any`
+    coverage_radius_km: r.coverage_radius_km ?? null,
+    coverage_geojson: r.coverage_geojson ?? null,
   }))
 
   return NextResponse.json({ ok: true, results })
 }
 
-// Pour éviter un 405 en GET (et rester explicite)
 export async function GET() {
   return NextResponse.json({ ok: false, error: 'Use POST /api/search' }, { status: 405 })
 }
