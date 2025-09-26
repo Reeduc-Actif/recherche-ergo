@@ -2,24 +2,22 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-import type * as GeoJSON from 'geojson' // pour typer coverage_geojson
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Corps JSON autorisé
+// On garde la charge utile minimale ; lat/lng ignorés pour l’instant (Belgique entière)
 const Payload = z.object({
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
-  radius_km: z.number().int().min(1).max(600).default(300), // Belgique entière par défaut
-  specialties_filter: z.array(z.string().min(1)).optional(),
-  languages_filter: z.array(z.string().min(2).max(2)).optional(), // fr|nl|de|en
+  radius_km: z.number().int().min(1).max(300).optional(),
+  specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
+  languages_filter: z.array(z.string().min(1)).nonempty().optional(),
 })
 
-const ALLOWED_LANGS = new Set(['fr', 'nl', 'de', 'en'])
+type Mode = 'cabinet' | 'domicile'
 
-// Typage d'une ligne renvoyée par la RPC
-type RpcRow = {
+type Row = {
   therapist_id: string
   slug: string
   full_name: string
@@ -30,80 +28,125 @@ type RpcRow = {
   city: string | null
   postal_code: string | null
   modes: string[] | null
-  distance_m: number | null
+  // distance_m ignorée (pas de rayon)
   lon: number | null
   lat: number | null
   languages: string[] | null
-  coverage_radius_km?: number | null
-  coverage_geojson?: GeoJSON.Feature | GeoJSON.FeatureCollection | null
 }
-
-type Result = RpcRow
 
 export async function POST(req: Request) {
-  // lecture du mode depuis la query (?mode=cabinet|domicile)
-  const { searchParams } = new URL(req.url)
-  const modeParam = searchParams.get('mode') ?? undefined
-  const mode = z.enum(['cabinet', 'domicile']).optional().parse(modeParam as 'cabinet' | 'domicile' | undefined)
-  const in_modes = mode ? [mode] : null
+  try {
+    const { searchParams } = new URL(req.url)
+    const mode: Mode =
+      (searchParams.get('mode') === 'domicile' ? 'domicile' : 'cabinet')
 
-  // validation du body
-  const body = await req.json().catch(() => ({}))
-  const parsed = Payload.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] as Result[] }, { status: 400 })
-  }
+    const body = await req.json().catch(() => ({}))
+    const parsed = Payload.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] as Row[] }, { status: 400 })
+    }
+    const { specialties_filter, languages_filter } = parsed.data
 
-  const { lat, lng, radius_km, specialties_filter, languages_filter } = parsed.data
+    const supabase = await supabaseServer()
 
-  // normalisation langues
-  const langsNorm =
-    Array.isArray(languages_filter)
-      ? languages_filter.map((v) => String(v).toLowerCase()).filter((v) => ALLOWED_LANGS.has(v))
-      : null
+    // 1) Filtre langues (liste des therapist_id)
+    let therapistIdsByLang: string[] | null = null
+    if (languages_filter?.length) {
+      const { data: langs, error: langErr } = await supabase
+        .from('therapist_languages')
+        .select('therapist_id, language_code')
+        .in('language_code', languages_filter)
 
-  const supabase = await supabaseServer()
-
-  // appel RPC
-  const { data: rpcData, error } = await supabase.rpc('search_therapists', {
-    in_lat: lat ?? null,
-    in_lng: lng ?? null,
-    in_radius_km: radius_km,
-    in_specialties: specialties_filter?.length ? specialties_filter : null,
-    in_modes,
-    in_languages: langsNorm && langsNorm.length ? langsNorm : null,
-  })
-
-  if (error) {
-    console.error('[RPC search_therapists]', error)
-    return NextResponse.json({ ok: false, error: error.message, results: [] }, { status: 500 })
+      if (langErr) throw langErr
+      therapistIdsByLang = Array.from(new Set((langs ?? []).map(r => r.therapist_id)))
     }
 
-  const rows = (rpcData ?? []) as RpcRow[]
+    // 2) Filtre spécialités (liste des therapist_id)
+    let therapistIdsBySpec: string[] | null = null
+    if (specialties_filter?.length) {
+      const { data: specs, error: specErr } = await supabase
+        .from('therapist_specialties')
+        .select('therapist_id, specialty_slug')
+        .in('specialty_slug', specialties_filter)
 
-  const results: Result[] = rows.map((r) => ({
-    therapist_id: r.therapist_id,
-    slug: r.slug,
-    full_name: r.full_name,
-    headline: r.headline,
-    booking_url: r.booking_url,
-    location_id: r.location_id,
-    address: r.address,
-    city: r.city,
-    postal_code: r.postal_code,
-    modes: r.modes,
-    distance_m: r.distance_m,
-    lon: r.lon,
-    lat: r.lat,
-    languages: r.languages ?? null,
-    coverage_radius_km: r.coverage_radius_km ?? null,
-    coverage_geojson: r.coverage_geojson ?? null,
-  }))
+      if (specErr) throw specErr
+      therapistIdsBySpec = Array.from(new Set((specs ?? []).map(r => r.therapist_id)))
+    }
 
-  return NextResponse.json({ ok: true, results })
+    // 3) Intersection éventuelle des deux filtres
+    let therapistFilter: string[] | null = null
+    if (therapistIdsByLang && therapistIdsBySpec) {
+      const set = new Set(therapistIdsByLang)
+      therapistFilter = therapistIdsBySpec.filter(id => set.has(id))
+    } else {
+      therapistFilter = therapistIdsByLang ?? therapistIdsBySpec ?? null
+    }
+
+    // 4) Jointure therapists + therapist_locations (filtrage par mode)
+    //    On ne fait pas de distance ; on renvoie tout en Belgique.
+    let q = supabase
+      .from('therapist_locations')
+      .select(`
+        id,
+        therapist_id,
+        address,
+        city,
+        postal_code,
+        country,
+        modes,
+        lon,
+        lat,
+        therapists!inner (
+          id,
+          slug,
+          full_name,
+          headline,
+          booking_url,
+          is_published
+        )
+      `)
+      .eq('country', 'BE')
+
+    // filtre “mode” (modes est text[])
+    q = q.contains('modes', [mode])
+
+    if (therapistFilter && therapistFilter.length) {
+      q = q.in('therapist_id', therapistFilter)
+    }
+
+    // uniquement profils publiés
+    // (filtre via la jointure inner déjà, mais on s’assure)
+    const { data: locs, error: locErr } = await q
+    if (locErr) throw locErr
+
+    // 5) mise en forme
+    const results: Row[] = (locs ?? [])
+      .filter((r: any) => r.therapists?.is_published) // sécurité
+      .map((r: any) => ({
+        therapist_id: r.therapist_id,
+        slug: r.therapists.slug,
+        full_name: r.therapists.full_name,
+        headline: r.therapists.headline,
+        booking_url: r.therapists.booking_url,
+        location_id: r.id,
+        address: r.address,
+        city: r.city,
+        postal_code: r.postal_code,
+        modes: r.modes ?? null,
+        lon: typeof r.lon === 'number' ? r.lon : null,
+        lat: typeof r.lat === 'number' ? r.lat : null,
+        languages: null, // (optionnel: on peut les recharger si besoin)
+      }))
+
+    return NextResponse.json({ ok: true, results })
+  } catch (e) {
+    // Log côté serveur pour que tu voies l'erreur exacte dans Vercel/terminal
+    console.error('[API /api/search] Fatal:', e)
+    const message = e instanceof Error ? e.message : 'Server error'
+    return NextResponse.json({ ok: false, error: message, results: [] }, { status: 500 })
+  }
 }
 
-// éviter 405 sur GET
 export async function GET() {
   return NextResponse.json({ ok: false, error: 'Use POST /api/search' }, { status: 405 })
 }
