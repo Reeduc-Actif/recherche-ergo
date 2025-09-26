@@ -15,9 +15,6 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 /** Belgique */
 const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
-const DEFAULT_RADIUS_KM = 25
-const MIN_R = 5
-const MAX_R = 300
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 const BE_BOUNDS: [[number, number], [number, number]] = [[2.5, 49.4], [6.4, 51.6]]
 const MAX_BOUNDS: [[number, number], [number, number]] = [[2.0, 49.0], [7.0, 52.2]]
@@ -39,15 +36,8 @@ type Result = {
   lon?: number | null
   lat?: number | null
   languages?: string[] | null
-  coverage_radius_km?: number | null
-  coverage_geojson?: import('geojson').Feature | import('geojson').FeatureCollection | null
 }
 
-type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
-const mb: MapboxWithTelemetry = mapboxgl
-if (typeof mb.setTelemetryEnabled === 'function') mb.setTelemetryEnabled(false)
-
-// Hiérarchie des spécialités (inchangé)
 const SPECIALTIES = [
   {
     slug: 'pediatrie',
@@ -107,210 +97,97 @@ function SearchPageInner() {
   const [results, setResults] = useState<Result[]>([])
   const [loading, setLoading] = useState(false)
 
-  // debouncing + anti-boucle (fitBounds/easeTo → moveend)
-  const moveTimerRef = useRef<number | null>(null)
-  const ignoreNextMoveRef = useRef(false)
-  const userMovedRef = useRef(false)
-
-  // --- URL state
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
 
-  const urlLat = Number(searchParams.get('lat'))
-  const urlLng = Number(searchParams.get('lng'))
-  const urlR = Number(searchParams.get('r'))
-
+  // mode par URL, défaut: cabinet
   const urlMode = (searchParams.get('mode') as Mode) || 'cabinet'
-
-  // Filtres depuis l’URL
-  const urlSpecs = (searchParams.get('spec') || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const urlLangs = (searchParams.get('langs') || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-
-  // Centre initial
-  const initialCenterRef = useRef<[number, number]>(
-    Number.isFinite(urlLat) && Number.isFinite(urlLng) ? [urlLng, urlLat] : INITIAL_CENTER,
-  )
-
-  const [radiusKm, setRadiusKm] = useState<number>(
-    Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
-  )
-  const radiusRef = useRef(radiusKm)
-  useEffect(() => { radiusRef.current = radiusKm }, [radiusKm])
+  const urlSpecs = (searchParams.get('spec') || '').split(',').map(s => s.trim()).filter(Boolean)
+  const urlLangs = (searchParams.get('langs') || '').split(',').map(s => s.trim()).filter(Boolean)
 
   const [selectedLangs, setSelectedLangs] = useState<string[]>(urlLangs)
   const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
   const [mode, setMode] = useState<Mode>(urlMode === 'domicile' ? 'domicile' : 'cabinet')
 
-  // Accordéons
-  const [openCats, setOpenCats] = useState<Record<string, boolean>>({
-    pediatrie: false,
-    adulte: false,
-    geriatrie: false,
-  })
-  const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
+  const updateUrl = useCallback((m: Mode = mode, specs = selectedSpecs, langs = selectedLangs) => {
+    const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+    sp.set('mode', m)
+    if (specs.length) sp.set('spec', specs.join(',')); else sp.delete('spec')
+    if (langs.length) sp.set('langs', langs.join(',')); else sp.delete('langs')
+    router.replace(`${pathname}?${sp.toString()}`)
+  }, [pathname, router, selectedSpecs, selectedLangs, mode])
 
-  // Helpers URL
-  const updateUrl = useCallback(
-    (
-      lat: number,
-      lng: number,
-      r: number,
-      specs = selectedSpecs,
-      langs = selectedLangs,
-      m: Mode = mode,
-    ) => {
-      const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
-      sp.set('mode', m)
-      sp.set('lat', lat.toFixed(6))
-      sp.set('lng', lng.toFixed(6))
-      sp.set('r', String(r))
-      if (specs.length) sp.set('spec', specs.join(','))
-      else sp.delete('spec')
-      if (langs.length) sp.set('langs', langs.join(','))
-      else sp.delete('langs')
-      router.replace(`${pathname}?${sp.toString()}`)
-    },
-    [pathname, router, selectedSpecs, selectedLangs, mode],
-  )
+  // Appelle l’API sans lat/lng → tout le pays
+  const fetchResults = useCallback(async (m: Mode = mode, specs = selectedSpecs, langs = selectedLangs) => {
+    try {
+      setLoading(true)
+      const url = new URL('/api/search', window.location.origin)
+      url.searchParams.set('mode', m)
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          specialties_filter: specs.length ? specs : undefined,
+          languages_filter: langs.length ? langs : undefined,
+          // lat/lng/radius_km omis → pas de filtre géo
+        }),
+      })
+      const json = (await res.json()) as { ok?: boolean; results?: Result[] }
+      setResults(json.ok && json.results ? json.results : [])
+    } catch {
+      setResults([])
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedSpecs, selectedLangs, mode])
 
-  // Fetch résultats
-  const fetchResults = useCallback(
-    async (
-      lat?: number,
-      lng?: number,
-      r: number = radiusRef.current,
-      specs = selectedSpecs,
-      langs = selectedLangs,
-      m: Mode = mode,
-    ) => {
-      try {
-        setLoading(true)
-        const url = new URL('/api/search', window.location.origin)
-        url.searchParams.set('mode', m)
-        const res = await fetch(url.toString(), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            lat,
-            lng,
-            radius_km: r,
-            specialties_filter: specs.length ? specs : undefined,
-            languages_filter: langs.length ? langs : undefined,
-          }),
-        })
-        const json = (await res.json()) as { ok?: boolean; results?: Result[] }
-        setResults(json.ok && json.results ? json.results : [])
-      } catch {
-        setResults([])
-      } finally {
-        setLoading(false)
-      }
-    },
-    [selectedSpecs, selectedLangs, mode],
-  )
-
-  // Init carte — une seule fois
+  // Init carte
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return
-    if (!MAPBOX_TOKEN) {
-      console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant')
-      return
-    }
+    if (!MAPBOX_TOKEN) { console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant'); return }
     mapboxgl.accessToken = MAPBOX_TOKEN
 
     const m = new mapboxgl.Map({
       container: mapDiv.current,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: initialCenterRef.current,
+      center: INITIAL_CENTER,
       zoom: 7,
     })
     mapRef.current = m
     m.setMaxBounds(MAX_BOUNDS)
-
     m.addControl(new mapboxgl.NavigationControl(), 'top-right')
-
-    m.on('dragstart', () => { userMovedRef.current = true })
-    m.on('zoomstart', () => { userMovedRef.current = true })
-
-    m.on('error', (ev: mapboxgl.ErrorEvent | { error?: unknown }) => {
-      const err: unknown = 'error' in ev ? ev.error : ev
-      // eslint-disable-next-line no-console
-      console.error('[Mapbox error]', err)
-    })
 
     const onLoad = async () => {
       m.resize()
-
-      const hasUrlCenter = Number.isFinite(urlLat) && Number.isFinite(urlLng)
-      if (!hasUrlCenter) {
-        ignoreNextMoveRef.current = true
-        m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 })
-      }
-
-      const c = m.getCenter()
-      await fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-      updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-    }
-
-    const onMoveEnd = () => {
-      if (ignoreNextMoveRef.current) { ignoreNextMoveRef.current = false; return }
-      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
-      moveTimerRef.current = window.setTimeout(() => {
-        const c = m.getCenter()
-        fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-        updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-      }, 300)
+      m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 }) // Belgique
+      await fetchResults(mode, selectedSpecs, selectedLangs)
+      updateUrl(mode, selectedSpecs, selectedLangs)
     }
 
     m.on('load', onLoad)
-    m.on('moveend', onMoveEnd)
 
     return () => {
       m.off('load', onLoad)
-      m.off('moveend', onMoveEnd)
-      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
       m.remove()
       mapRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // init unique
+  }, [])
 
-  // Rayon changé → relance
+  // Filtres / mode → relance (pas de moveend/refetch)
   useEffect(() => {
-    const m = mapRef.current
-    if (!m) return
-    userMovedRef.current = false
-    const c = m.getCenter()
-    fetchResults(c.lat, c.lng, radiusKm, selectedSpecs, selectedLangs, mode)
-    updateUrl(c.lat, c.lng, radiusKm, selectedSpecs, selectedLangs, mode)
-  }, [radiusKm, fetchResults, updateUrl, selectedSpecs, selectedLangs, mode])
+    fetchResults(mode, selectedSpecs, selectedLangs)
+    updateUrl(mode, selectedSpecs, selectedLangs)
+  }, [mode, selectedSpecs, selectedLangs, fetchResults, updateUrl])
 
-  // Filtres/langues/mode → relance
-  useEffect(() => {
-    const m = mapRef.current
-    if (!m) return
-    const c = m.getCenter()
-    fetchResults(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-    updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
-  }, [selectedSpecs, selectedLangs, mode, fetchResults, updateUrl])
-
-  // Marqueurs + popups + fitBounds
+  // Marqueurs + popups
   useEffect(() => {
     const m = mapRef.current
     if (!m) return
 
     markersRef.current.forEach((mk) => mk.remove())
     markersRef.current = []
-
-    const bounds = new mapboxgl.LngLatBounds()
-    let count = 0
 
     results.forEach((r) => {
       if (r.lon != null && r.lat != null) {
@@ -329,36 +206,20 @@ function SearchPageInner() {
           .setLngLat(lngLat)
           .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
           .addTo(m)
-
         markersRef.current.push(mk)
-        bounds.extend(lngLat)
-        count++
       }
     })
-
-    if (!userMovedRef.current) {
-      if (count >= 2) {
-        ignoreNextMoveRef.current = true
-        m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
-      } else if (count === 1) {
-        const c = bounds.getCenter()
-        ignoreNextMoveRef.current = true
-        m.easeTo({ center: c, zoom: 12, duration: 600 })
-      }
-    }
   }, [results])
 
   const items = useMemo(
-    () =>
-      results.map((r) => ({
-        key: r.location_id,
-        title: r.full_name,
-        subtitle: r.headline ?? '',
-        address: [r.address, r.postal_code, r.city].filter(Boolean).join(', '),
-        booking: r.booking_url ?? undefined,
-        km: r.distance_m ? (r.distance_m / 1000).toFixed(1) : undefined,
-        slug: r.slug,
-      })),
+    () => results.map((r) => ({
+      key: r.location_id,
+      title: r.full_name,
+      subtitle: r.headline ?? '',
+      address: [r.address, r.postal_code, r.city].filter(Boolean).join(', '),
+      booking: r.booking_url ?? undefined,
+      slug: r.slug,
+    })),
     [results],
   )
 
@@ -392,31 +253,10 @@ function SearchPageInner() {
           <div className="text-sm font-medium">Filtres</div>
 
           {/* Spécialités */}
-          <SpecialtiesFilter
-            selectedSpecs={selectedSpecs}
-            setSelectedSpecs={setSelectedSpecs}
-          />
+          <SpecialtiesFilter selectedSpecs={selectedSpecs} setSelectedSpecs={setSelectedSpecs} />
 
           {/* Langues */}
-          <LanguagesFilter
-            selectedLangs={selectedLangs}
-            setSelectedLangs={setSelectedLangs}
-          />
-
-          {/* Rayon */}
-          <div className="flex items-center gap-2 text-sm">
-            <label htmlFor="radius">Rayon</label>
-            <input
-              id="radius"
-              type="range"
-              min={MIN_R}
-              max={MAX_R}
-              step={5}
-              value={radiusKm}
-              onChange={(e) => setRadiusKm(Number(e.target.value))}
-            />
-            <span className="w-10 text-right">{radiusKm} km</span>
-          </div>
+          <LanguagesFilter selectedLangs={selectedLangs} setSelectedLangs={setSelectedLangs} />
         </div>
 
         <div className="text-sm text-neutral-600">
@@ -425,7 +265,7 @@ function SearchPageInner() {
 
         {!loading && items.length === 0 && (
           <div className="rounded-lg border bg-neutral-50 p-4 text-sm text-neutral-700">
-            Aucun ergothérapeute trouvé. Essayez un autre rayon, déplacez la carte ou modifiez les filtres.
+            Aucun ergothérapeute trouvé. Modifiez les filtres (mode / spécialités / langues).
           </div>
         )}
 
@@ -437,7 +277,6 @@ function SearchPageInner() {
                   <div className="font-medium">{it.title}</div>
                   {it.subtitle && <div className="text-sm text-neutral-600">{it.subtitle}</div>}
                   <div className="text-sm text-neutral-600">{it.address}</div>
-                  {it.km && <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>}
                 </div>
                 <div className="flex flex-col gap-2">
                   <a className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" href={`/ergo/${it.slug}`}>
@@ -485,14 +324,10 @@ function SpecialtiesFilter(props: {
                 <span className="font-medium">
                   {cat.label}
                   {selectedInCat > 0 && (
-                    <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                      {selectedInCat}
-                    </span>
+                    <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">{selectedInCat}</span>
                   )}
                 </span>
-                <span className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`} aria-hidden>
-                  ▶
-                </span>
+                <span className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`} aria-hidden>▶</span>
               </button>
 
               <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'}`}>
@@ -519,9 +354,7 @@ function SpecialtiesFilter(props: {
                           type="checkbox"
                           checked={checked}
                           onChange={(e) =>
-                            setSelectedSpecs((prev) =>
-                              e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug),
-                            )
+                            setSelectedSpecs((prev) => e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug))
                           }
                         />
                         {sub.label}
@@ -583,7 +416,4 @@ function escapeHtml(input: string) {
 }
 function escapeAttr(input: string) {
   return escapeHtml(input)
-}
-function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n))
 }
