@@ -219,8 +219,8 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
       const drafts: LocationDraft[] = []
       for (const l of (locs ?? []) as LocationRow[]) {
-        const modes = l.modes ?? []
-        const countryBE: 'BE' = 'BE'
+  const modes = l.modes ?? []
+  const countryBE = 'BE' as const
 
         if (modes.includes('domicile')) {
           const { data: tlc } = await sb
