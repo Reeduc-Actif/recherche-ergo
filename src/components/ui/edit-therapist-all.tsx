@@ -31,6 +31,7 @@ type Therapist = {
   price_unit: string | null
 }
 
+/* --- Tables côté lecture --- */
 type LocationRow = {
   id: number
   address: string | null
@@ -42,23 +43,28 @@ type LocationRow = {
 
 type TLCRow = { commune_code: string }
 
+/* --- Communes (référentiel) --- */
+type CommuneOption = { code_nis: string; name_fr: string }
+
 function CommunePicker({
   value,
   onChange,
 }: { value: string[]; onChange: (codes: string[]) => void }) {
   const sb = supabaseBrowser()
   const [q, setQ] = useState('')
-  const [options, setOptions] = useState<{ code_nis: string; name_fr: string }[]>([])
+  const [options, setOptions] = useState<CommuneOption[]>([])
+
   useEffect(() => {
     let active = true
     const load = async () => {
-      if (!q || q.trim().length < 2) { setOptions([]); return }
+      const term = q.trim()
+      if (term.length < 2) { setOptions([]); return }
       const { data } = await sb
         .from('communes_be')
         .select('code_nis,name_fr')
-        .ilike('name_fr', `%${q.trim()}%`)
+        .ilike('name_fr', `%${term}%`)
         .limit(8)
-      if (active) setOptions(data ?? [])
+      if (active) setOptions((data ?? []) as CommuneOption[])
     }
     load()
     return () => { active = false }
@@ -66,7 +72,13 @@ function CommunePicker({
 
   return (
     <div className="space-y-2">
-      <input className="input w-full" placeholder="Rechercher une commune…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input
+        className="input w-full"
+        placeholder="Rechercher une commune…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+
       {options.length > 0 && (
         <div className="rounded-lg border">
           {options.map(opt => {
@@ -90,12 +102,19 @@ function CommunePicker({
           })}
         </div>
       )}
+
       {value.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {value.map(code => (
             <span key={code} className="rounded-full border px-2 py-0.5 text-xs">
               {code}
-              <button type="button" className="ml-1 text-neutral-500" onClick={() => onChange(value.filter(c => c !== code))}>×</button>
+              <button
+                type="button"
+                className="ml-1 text-neutral-500"
+                onClick={() => onChange(value.filter(c => c !== code))}
+              >
+                ×
+              </button>
             </span>
           ))}
         </div>
@@ -104,9 +123,22 @@ function CommunePicker({
   )
 }
 
-type LocationDraft =
-  | { id?: number; mode: 'cabinet'; address: string; postal_code: string; city: string; country: 'BE'; communes?: never }
-  | { id?: number; mode: 'domicile'; address?: string; postal_code?: string; city?: string; country: 'BE'; communes: string[] }
+/* --- Brouillons de localisation (discriminated union) --- */
+type CabinetDraft = {
+  id?: number
+  mode: 'cabinet'
+  address: string
+  postal_code: string
+  city: string
+  country: 'BE'
+}
+type DomicileDraft = {
+  id?: number
+  mode: 'domicile'
+  country: 'BE'
+  communes: string[]
+}
+type LocationDraft = CabinetDraft | DomicileDraft
 
 export default function EditTherapistAll({ therapist }: { therapist: Therapist }) {
   const sb = supabaseBrowser()
@@ -141,6 +173,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
   // --- localisations ---
   const [locations, setLocations] = useState<LocationDraft[]>([])
+
   const addLocation = (mode: Mode) =>
     setLocations(v => [
       ...v,
@@ -148,51 +181,67 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         ? { mode, address: '', postal_code: '', city: '', country: 'BE' }
         : { mode, country: 'BE', communes: [] },
     ])
+
   const removeLocation = (idx: number) => setLocations(v => v.filter((_, i) => i !== idx))
-  const updateLoc = (idx: number, patch: Partial<LocationDraft>) =>
-    setLocations(v => v.map((l, i) => (i === idx ? { ...l, ...patch } as LocationDraft : l)))
+
+  // surcharges pour éviter tout `any` au patch
+  function updateLoc(idx: number, patch: Partial<CabinetDraft>): void
+  function updateLoc(idx: number, patch: Partial<DomicileDraft>): void
+  function updateLoc(idx: number, patch: Partial<LocationDraft>): void {
+    setLocations(v =>
+      v.map((l, i) => (i === idx ? ({ ...l, ...patch } as LocationDraft) : l)),
+    )
+  }
 
   // --- préchargement depuis DB ---
   useEffect(() => {
     const load = async () => {
       // langues
-      const { data: langs } = await sb.from('therapist_languages').select('language_code').eq('therapist_id', therapist.id)
-      setLanguages((langs ?? []).map(l => l.language_code as string))
+      const { data: langs } = await sb
+        .from('therapist_languages')
+        .select('language_code')
+        .eq('therapist_id', therapist.id)
+      setLanguages((langs ?? []).map(l => l.language_code))
 
       // spécialités
-      const { data: sps } = await sb.from('therapist_specialties').select('specialty_slug').eq('therapist_id', therapist.id)
-      setSpecialties((sps ?? []).map(s => s.specialty_slug as string))
+      const { data: sps } = await sb
+        .from('therapist_specialties')
+        .select('specialty_slug')
+        .eq('therapist_id', therapist.id)
+      setSpecialties((sps ?? []).map(s => s.specialty_slug))
 
       // localisations
       const { data: locs } = await sb
         .from('therapist_locations')
         .select('id,address,postal_code,city,country,modes')
         .eq('therapist_id', therapist.id)
-        .order('id', { ascending: true }) as { data: LocationRow[] | null }
+        .order('id', { ascending: true })
 
       const drafts: LocationDraft[] = []
-      for (const l of locs ?? []) {
-        const isDomicile = (l.modes ?? []).includes('domicile')
-        if (isDomicile) {
+      for (const l of (locs ?? []) as LocationRow[]) {
+        const modes = l.modes ?? []
+        const countryBE: 'BE' = 'BE'
+
+        if (modes.includes('domicile')) {
           const { data: tlc } = await sb
             .from('therapist_location_communes')
             .select('commune_code')
-            .eq('location_id', l.id) as { data: TLCRow[] | null }
+            .eq('location_id', l.id)
           drafts.push({
             id: l.id,
             mode: 'domicile',
-            country: (l.country as any) ?? 'BE',
-            communes: (tlc ?? []).map(x => x.commune_code),
+            country: countryBE,
+            communes: (tlc ?? []).map((x: TLCRow) => x.commune_code),
           })
         }
-        if ((l.modes ?? []).includes('cabinet')) {
+        if (modes.includes('cabinet')) {
           drafts.push({
             id: l.id,
             mode: 'cabinet',
             address: l.address ?? '',
             postal_code: l.postal_code ?? '',
             city: l.city ?? '',
-            country: (l.country as any) ?? 'BE',
+            country: countryBE,
           })
         }
       }
@@ -221,9 +270,11 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
     for (const loc of locations) {
       if (loc.mode === 'cabinet') {
-        if (!loc.address || !loc.city || !loc.postal_code) return setErr('Chaque cabinet doit avoir adresse, ville et code postal.')
+        if (!loc.address || !loc.city || !loc.postal_code)
+          return setErr('Chaque cabinet doit avoir adresse, ville et code postal.')
       } else {
-        if (!loc.communes || loc.communes.length === 0) return setErr('Chaque zone à domicile doit contenir au moins une commune.')
+        if (!loc.communes || loc.communes.length === 0)
+          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
       }
     }
 
@@ -246,10 +297,15 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         price_max: maxNum,
         price_unit: priceUnit || null,
       }
-      const { error: upErr } = await sb.from('therapists').update(payloadTherapist).eq('id', therapist.id).select('id').single()
+      const { error: upErr } = await sb
+        .from('therapists')
+        .update(payloadTherapist)
+        .eq('id', therapist.id)
+        .select('id')
+        .single()
       if (upErr) throw upErr
 
-      // 2) Sync relations + localisations (idempotent)
+      // 2) Sync relations + localisations (idempotent côté route)
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -260,17 +316,17 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
           booking_url: bookingUrl.trim() || undefined,
           languages,
           specialties,
-          locations, // <— NOUVEAU
+          locations, // ← cabinet[] & domicile[] (communes) envoyés ensemble
           price_min: minNum,
           price_max: maxNum,
           price_unit: priceUnit || undefined,
         }),
       })
-      const json = await res.json()
+      const json: { ok?: boolean; error?: string } = await res.json()
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API (onboard)')
 
       setMsg('Profil ergothérapeute mis à jour !')
-    } catch (e: unknown) {
+    } catch (e) {
       const message = e instanceof Error ? e.message : 'Mise à jour impossible.'
       setErr(message)
     } finally {
@@ -372,8 +428,20 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">Localisations</div>
             <div className="flex gap-2">
-              <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('cabinet')}>Ajouter un cabinet</button>
-              <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('domicile')}>Ajouter une zone à domicile</button>
+              <button
+                type="button"
+                className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
+                onClick={() => addLocation('cabinet')}
+              >
+                Ajouter un cabinet
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
+                onClick={() => addLocation('domicile')}
+              >
+                Ajouter une zone à domicile
+              </button>
             </div>
           </div>
 
@@ -381,7 +449,9 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
             <div key={`${loc.mode}-${idx}-${loc.id ?? 'new'}`} className="rounded-xl border p-3 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">{loc.mode === 'cabinet' ? 'Cabinet' : 'À domicile'}</div>
-                <button type="button" className="text-sm text-red-600 hover:underline" onClick={() => removeLocation(idx)}>Supprimer</button>
+                <button type="button" className="text-sm text-red-600 hover:underline" onClick={() => removeLocation(idx)}>
+                  Supprimer
+                </button>
               </div>
 
               {loc.mode === 'cabinet' ? (
@@ -403,8 +473,8 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                 <div>
                   <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
                   <CommunePicker
-                    value={loc.communes ?? []}
-                    onChange={(codes) => updateLoc(idx, { communes: codes } as any)}
+                    value={loc.communes}
+                    onChange={(codes) => updateLoc(idx, { communes: codes })}
                   />
                 </div>
               )}

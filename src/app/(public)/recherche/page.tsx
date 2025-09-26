@@ -14,10 +14,10 @@ import {
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 /** Belgique */
-const INITIAL_CENTER: [number, number] = [4.3517, 50.8503]
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 const BE_BOUNDS: [[number, number], [number, number]] = [[2.5, 49.4], [6.4, 51.6]]
 const MAX_BOUNDS: [[number, number], [number, number]] = [[2.0, 49.0], [7.0, 52.2]]
+const RADIUS_KM = 300 // plein pays (rayon large pour tout couvrir)
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -36,8 +36,15 @@ type Result = {
   lon?: number | null
   lat?: number | null
   languages?: string[] | null
+  coverage_radius_km?: number | null
+  coverage_geojson?: import('geojson').Feature | import('geojson').FeatureCollection | null
 }
 
+type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
+const mb: MapboxWithTelemetry = mapboxgl
+if (typeof mb.setTelemetryEnabled === 'function') mb.setTelemetryEnabled(false)
+
+// Hiérarchie des spécialités (inchangé)
 const SPECIALTIES = [
   {
     slug: 'pediatrie',
@@ -75,13 +82,6 @@ const SPECIALTIES = [
   },
 ]
 
-const LANGUAGES = [
-  { value: 'fr', label: 'Français' },
-  { value: 'nl', label: 'Néerlandais' },
-  { value: 'de', label: 'Allemand' },
-  { value: 'en', label: 'Anglais' },
-]
-
 export default function SearchPage() {
   return (
     <Suspense fallback={<div className="p-6 text-sm text-neutral-600">Chargement…</div>}>
@@ -97,19 +97,43 @@ function SearchPageInner() {
   const [results, setResults] = useState<Result[]>([])
   const [loading, setLoading] = useState(false)
 
+  // debouncing + anti-boucle (fitBounds/easeTo → moveend)
+  const moveTimerRef = useRef<number | null>(null)
+  const ignoreNextMoveRef = useRef(false)
+  const userMovedRef = useRef(false)
+
+  // --- URL state
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
 
-  // mode par URL, défaut: cabinet
+  const urlLat = Number(searchParams.get('lat'))
+  const urlLng = Number(searchParams.get('lng'))
   const urlMode = (searchParams.get('mode') as Mode) || 'cabinet'
-  const urlSpecs = (searchParams.get('spec') || '').split(',').map(s => s.trim()).filter(Boolean)
-  const urlLangs = (searchParams.get('langs') || '').split(',').map(s => s.trim()).filter(Boolean)
+
+  // Filtres depuis l’URL
+  const urlSpecs = (searchParams.get('spec') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const urlLangs = (searchParams.get('langs') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 
   const [selectedLangs, setSelectedLangs] = useState<string[]>(urlLangs)
   const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
   const [mode, setMode] = useState<Mode>(urlMode === 'domicile' ? 'domicile' : 'cabinet')
 
+  // Accordéons
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({
+    pediatrie: false,
+    adulte: false,
+    geriatrie: false,
+  })
+  const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
+
+  // Helpers URL
   const updateUrl = useCallback(() => {
     const m = mapRef.current
     if (!m) return
@@ -118,7 +142,8 @@ function SearchPageInner() {
     sp.set('mode', mode)
     sp.set('lat', c.lat.toFixed(6))
     sp.set('lng', c.lng.toFixed(6))
-    sp.set('r', String(radiusRef.current))
+    // on garde le param r=RADIUS_KM pour compat éventuelle
+    sp.set('r', String(RADIUS_KM))
     if (selectedSpecs.length) sp.set('spec', selectedSpecs.join(','))
     else sp.delete('spec')
     if (selectedLangs.length) sp.set('langs', selectedLangs.join(','))
@@ -126,84 +151,117 @@ function SearchPageInner() {
     router.replace(`${pathname}?${sp.toString()}`)
   }, [mode, pathname, router, selectedLangs, selectedSpecs])
 
-  // Fetch résultats
-  const fetchResults = useCallback(
-    async () => {
-      try {
-        const m = mapRef.current
-        if (!m) return
-        setLoading(true)
-        const c = m.getCenter()
-        const url = new URL('/api/search', window.location.origin)
-        url.searchParams.set('mode', mode)
-        const res = await fetch(url.toString(), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            lat: c.lat,
-            lng: c.lng,
-            radius_km: radiusRef.current,
-            specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
-            languages_filter: selectedLangs.length ? selectedLangs : undefined,
-          }),
-        })
-        const json = (await res.json()) as { ok?: boolean; results?: Result[] }
-        setResults(json.ok && json.results ? json.results : [])
-      } catch {
-        setResults([])
-      } finally {
-        setLoading(false)
-      }
-    },
-    [mode, selectedLangs, selectedSpecs],
-  )
+  // Fetch résultats (rayon constant plein pays)
+  const fetchResults = useCallback(async () => {
+    try {
+      const m = mapRef.current
+      if (!m) return
+      setLoading(true)
+      const c = m.getCenter()
+      const url = new URL('/api/search', window.location.origin)
+      url.searchParams.set('mode', mode)
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lat: c.lat,
+          lng: c.lng,
+          radius_km: RADIUS_KM,
+          specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
+          languages_filter: selectedLangs.length ? selectedLangs : undefined,
+        }),
+      })
+      const json = (await res.json()) as { ok?: boolean; results?: Result[] }
+      setResults(json.ok && json.results ? json.results : [])
+    } catch {
+      setResults([])
+    } finally {
+      setLoading(false)
+    }
+  }, [mode, selectedLangs, selectedSpecs])
 
-  // Init carte
+  // Init carte — une seule fois
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return
-    if (!MAPBOX_TOKEN) { console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant'); return }
+    if (!MAPBOX_TOKEN) {
+      console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant')
+      return
+    }
     mapboxgl.accessToken = MAPBOX_TOKEN
+
+    const center: [number, number] =
+      Number.isFinite(urlLat) && Number.isFinite(urlLng) ? [urlLng, urlLat] : [4.3517, 50.8503]
 
     const m = new mapboxgl.Map({
       container: mapDiv.current,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: INITIAL_CENTER,
+      center,
       zoom: 7,
     })
     mapRef.current = m
     m.setMaxBounds(MAX_BOUNDS)
+
     m.addControl(new mapboxgl.NavigationControl(), 'top-right')
+
+    m.on('dragstart', () => { userMovedRef.current = true })
+    m.on('zoomstart', () => { userMovedRef.current = true })
+
+    m.on('error', (ev: mapboxgl.ErrorEvent | { error?: unknown }) => {
+      const err: unknown = 'error' in ev ? ev.error : ev
+      console.error('[Mapbox error]', err)
+    })
 
     const onLoad = async () => {
       m.resize()
-      m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 }) // Belgique
+      const hasUrlCenter = Number.isFinite(urlLat) && Number.isFinite(urlLng)
+      if (!hasUrlCenter) {
+        ignoreNextMoveRef.current = true
+        m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 })
+      }
       await fetchResults()
       updateUrl()
     }
 
+    const onMoveEnd = () => {
+      if (ignoreNextMoveRef.current) { ignoreNextMoveRef.current = false; return }
+      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
+      moveTimerRef.current = window.setTimeout(() => {
+        fetchResults()
+        updateUrl()
+      }, 300)
+    }
+
     m.on('load', onLoad)
+    m.on('moveend', onMoveEnd)
 
     return () => {
       m.off('load', onLoad)
+      m.off('moveend', onMoveEnd)
+      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current)
       m.remove()
       mapRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []) // init unique
 
-  // Filtres / mode → relance (pas de moveend/refetch)
+  // Relances quand filtres/langues/mode changent
   useEffect(() => {
+    const m = mapRef.current
+    if (!m) return
     fetchResults()
     updateUrl()
-  }, [mode, selectedSpecs, selectedLangs, fetchResults, updateUrl])
+  }, [selectedSpecs, selectedLangs, mode, fetchResults, updateUrl])
 
-  // Marqueurs + popups
+  // Marqueurs + popups + fitBounds
   useEffect(() => {
     const m = mapRef.current
     if (!m) return
 
     markersRef.current.forEach((mk) => mk.remove())
     markersRef.current = []
+
+    const bounds = new mapboxgl.LngLatBounds()
+    let count = 0
 
     results.forEach((r) => {
       if (r.lon != null && r.lat != null) {
@@ -222,20 +280,37 @@ function SearchPageInner() {
           .setLngLat(lngLat)
           .setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(popupHtml))
           .addTo(m)
+
         markersRef.current.push(mk)
+        bounds.extend(lngLat)
+        count++
       }
     })
+
+    if (!userMovedRef.current) {
+      if (count >= 2) {
+        ignoreNextMoveRef.current = true
+        m.fitBounds(bounds, { padding: 48, maxZoom: 12, duration: 600 })
+      } else if (count === 1) {
+        const c = bounds.getCenter()
+        ignoreNextMoveRef.current = true
+        m.easeTo({ center: c, zoom: 12, duration: 600 })
+      }
+    }
   }, [results])
 
+  // Liste
   const items = useMemo(
-    () => results.map((r) => ({
-      key: r.location_id,
-      title: r.full_name,
-      subtitle: r.headline ?? '',
-      address: [r.address, r.postal_code, r.city].filter(Boolean).join(', '),
-      booking: r.booking_url ?? undefined,
-      slug: r.slug,
-    })),
+    () =>
+      results.map((r) => ({
+        key: r.location_id,
+        title: r.full_name,
+        subtitle: r.headline ?? '',
+        address: [r.address, r.postal_code, r.city].filter(Boolean).join(', '),
+        booking: r.booking_url ?? undefined,
+        km: r.distance_m ? (r.distance_m / 1000).toFixed(1) : undefined,
+        slug: r.slug,
+      })),
     [results],
   )
 
@@ -269,7 +344,71 @@ function SearchPageInner() {
           <div className="text-sm font-medium">Filtres</div>
 
           {/* Spécialités */}
-          <SpecialtiesFilter selectedSpecs={selectedSpecs} setSelectedSpecs={setSelectedSpecs} />
+          <div className="space-y-2">
+            <div className="text-xs text-neutral-500">Spécialités</div>
+            <div className="space-y-2">
+              {SPECIALTIES.map((cat) => {
+                const selectedInCat = cat.children.filter((sub) => selectedSpecs.includes(sub.slug)).length
+                return (
+                  <div key={cat.slug} className="rounded-lg border">
+                    <button
+                      type="button"
+                      onClick={() => toggleCat(cat.slug)}
+                      className="flex w-full items-center justify-between px-3 py-2"
+                    >
+                      <span className="font-medium">
+                        {cat.label}
+                        {selectedInCat > 0 && (
+                          <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                            {selectedInCat}
+                          </span>
+                        )}
+                      </span>
+                      <span className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`} aria-hidden>
+                        ▶
+                      </span>
+                    </button>
+
+                    <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'}`}>
+                      <div className="flex flex-wrap gap-2 px-3 pb-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allSlugs = cat.children.map((c) => c.slug)
+                            const allSelected = allSlugs.every((s) => selectedSpecs.includes(s))
+                            setSelectedSpecs((prev) =>
+                              allSelected ? prev.filter((s) => !allSlugs.includes(s)) : Array.from(new Set([...prev, ...allSlugs])),
+                            )
+                          }}
+                          className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
+                        >
+                          {cat.children.every((s) => selectedSpecs.includes(s.slug)) ? 'Tout désélectionner' : 'Tout sélectionner'}
+                        </button>
+
+                        {cat.children.map((sub) => {
+                          const checked = selectedSpecs.includes(sub.slug)
+                          return (
+                            <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setSelectedSpecs((prev) =>
+                                    e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug),
+                                  )
+                                }
+                              />
+                              {sub.label}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
 
           {/* Langues */}
           <LanguagesFilter selectedLangs={selectedLangs} setSelectedLangs={setSelectedLangs} />
@@ -281,7 +420,7 @@ function SearchPageInner() {
 
         {!loading && items.length === 0 && (
           <div className="rounded-lg border bg-neutral-50 p-4 text-sm text-neutral-700">
-            Aucun ergothérapeute trouvé. Modifiez les filtres (mode / spécialités / langues).
+            Aucun ergothérapeute trouvé. Modifiez les filtres ou déplacez la carte.
           </div>
         )}
 
@@ -293,6 +432,7 @@ function SearchPageInner() {
                   <div className="font-medium">{it.title}</div>
                   {it.subtitle && <div className="text-sm text-neutral-600">{it.subtitle}</div>}
                   <div className="text-sm text-neutral-600">{it.address}</div>
+                  {it.km && <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>}
                 </div>
                 <div className="flex flex-col gap-2">
                   <a className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" href={`/ergo/${it.slug}`}>
@@ -312,96 +452,22 @@ function SearchPageInner() {
   )
 }
 
-function SpecialtiesFilter(props: {
-  selectedSpecs: string[]
-  setSelectedSpecs: React.Dispatch<React.SetStateAction<string[]>>
-}) {
-  const { selectedSpecs, setSelectedSpecs } = props
-  const [openCats, setOpenCats] = useState<Record<string, boolean>>({
-    pediatrie: false,
-    adulte: false,
-    geriatrie: false,
-  })
-  const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
-
-  return (
-    <div className="space-y-2">
-      <div className="text-xs text-neutral-500">Spécialités</div>
-      <div className="space-y-2">
-        {SPECIALTIES.map((cat) => {
-          const selectedInCat = cat.children.filter((sub) => selectedSpecs.includes(sub.slug)).length
-          return (
-            <div key={cat.slug} className="rounded-lg border">
-              <button
-                type="button"
-                onClick={() => toggleCat(cat.slug)}
-                className="flex w-full items-center justify-between px-3 py-2"
-              >
-                <span className="font-medium">
-                  {cat.label}
-                  {selectedInCat > 0 && (
-                    <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">{selectedInCat}</span>
-                  )}
-                </span>
-                <span className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`} aria-hidden>▶</span>
-              </button>
-
-              <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'}`}>
-                <div className="flex flex-wrap gap-2 px-3 pb-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allSlugs = cat.children.map((c) => c.slug)
-                      const allSelected = allSlugs.every((s) => selectedSpecs.includes(s))
-                      setSelectedSpecs((prev) =>
-                        allSelected ? prev.filter((s) => !allSlugs.includes(s)) : Array.from(new Set([...prev, ...allSlugs])),
-                      )
-                    }}
-                    className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
-                  >
-                    {cat.children.every((s) => selectedSpecs.includes(s.slug)) ? 'Tout désélectionner' : 'Tout sélectionner'}
-                  </button>
-
-                  {cat.children.map((sub) => {
-                    const checked = selectedSpecs.includes(sub.slug)
-                    return (
-                      <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) =>
-                            setSelectedSpecs((prev) => e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug))
-                          }
-                        />
-                        {sub.label}
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 function LanguagesFilter(props: {
   selectedLangs: string[]
   setSelectedLangs: React.Dispatch<React.SetStateAction<string[]>>
 }) {
   const { selectedLangs, setSelectedLangs } = props
+  const list = [
+    { value: 'fr', label: 'Français' },
+    { value: 'nl', label: 'Néerlandais' },
+    { value: 'de', label: 'Allemand' },
+    { value: 'en', label: 'Anglais' },
+  ]
   return (
     <div className="space-y-2">
       <div className="text-xs text-neutral-500">Langues</div>
       <div className="flex flex-wrap gap-2">
-        {[
-          { value: 'fr', label: 'Français' },
-          { value: 'nl', label: 'Néerlandais' },
-          { value: 'de', label: 'Allemand' },
-          { value: 'en', label: 'Anglais' },
-        ].map((l) => {
+        {list.map((l) => {
           const checked = selectedLangs.includes(l.value)
           return (
             <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">

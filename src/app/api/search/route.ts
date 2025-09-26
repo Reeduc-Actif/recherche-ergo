@@ -2,21 +2,23 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-import type * as GeoJSON from 'geojson' // ✅ pour typer coverage_geojson
+import type * as GeoJSON from 'geojson' // pour typer coverage_geojson
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// Corps JSON autorisé
 const Payload = z.object({
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
-  radius_km: z.number().int().min(1).max(300).default(25),
-  specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
-  languages_filter: z.array(z.string().min(1)).nonempty().optional(),
+  radius_km: z.number().int().min(1).max(600).default(300), // Belgique entière par défaut
+  specialties_filter: z.array(z.string().min(1)).optional(),
+  languages_filter: z.array(z.string().min(2).max(2)).optional(), // fr|nl|de|en
 })
 
 const ALLOWED_LANGS = new Set(['fr', 'nl', 'de', 'en'])
 
+// Typage d'une ligne renvoyée par la RPC
 type RpcRow = {
   therapist_id: string
   slug: string
@@ -32,7 +34,6 @@ type RpcRow = {
   lon: number | null
   lat: number | null
   languages: string[] | null
-  // ✅ on précise les types optionnels
   coverage_radius_km?: number | null
   coverage_geojson?: GeoJSON.Feature | GeoJSON.FeatureCollection | null
 }
@@ -40,9 +41,13 @@ type RpcRow = {
 type Result = RpcRow
 
 export async function POST(req: Request) {
+  // lecture du mode depuis la query (?mode=cabinet|domicile)
   const { searchParams } = new URL(req.url)
-  const mode = z.enum(['cabinet', 'domicile']).optional().catch(undefined).parse(searchParams.get('mode') || undefined)
+  const modeParam = searchParams.get('mode') ?? undefined
+  const mode = z.enum(['cabinet', 'domicile']).optional().parse(modeParam as 'cabinet' | 'domicile' | undefined)
+  const in_modes = mode ? [mode] : null
 
+  // validation du body
   const body = await req.json().catch(() => ({}))
   const parsed = Payload.safeParse(body)
   if (!parsed.success) {
@@ -51,14 +56,15 @@ export async function POST(req: Request) {
 
   const { lat, lng, radius_km, specialties_filter, languages_filter } = parsed.data
 
+  // normalisation langues
   const langsNorm =
     Array.isArray(languages_filter)
       ? languages_filter.map((v) => String(v).toLowerCase()).filter((v) => ALLOWED_LANGS.has(v))
       : null
 
   const supabase = await supabaseServer()
-  const in_modes = mode ? [mode] : null
 
+  // appel RPC
   const { data: rpcData, error } = await supabase.rpc('search_therapists', {
     in_lat: lat ?? null,
     in_lng: lng ?? null,
@@ -69,6 +75,7 @@ export async function POST(req: Request) {
   })
 
   if (error) {
+    // garder ce log pour diagnostiquer côté serveur
     // eslint-disable-next-line no-console
     console.error('[RPC search_therapists]', error)
     return NextResponse.json({ ok: false, error: error.message, results: [] as Result[] }, { status: 500 })
@@ -91,7 +98,6 @@ export async function POST(req: Request) {
     lon: r.lon,
     lat: r.lat,
     languages: r.languages ?? null,
-    // ✅ plus de `any`
     coverage_radius_km: r.coverage_radius_km ?? null,
     coverage_geojson: r.coverage_geojson ?? null,
   }))
@@ -99,6 +105,7 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true, results })
 }
 
+// éviter 405 sur GET
 export async function GET() {
   return NextResponse.json({ ok: false, error: 'Use POST /api/search' }, { status: 405 })
 }

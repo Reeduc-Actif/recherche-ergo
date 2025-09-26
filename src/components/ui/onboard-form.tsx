@@ -12,7 +12,9 @@ const LANGS = [
   { value: 'en', label: 'Anglais' },
 ]
 
-// --- composant léger d’autocomplétion sur la table communes_be ---
+/* ---------- Communes (référentiel) ---------- */
+type CommuneOption = { code_nis: string; name_fr: string }
+
 function CommunePicker({
   value,
   onChange,
@@ -22,17 +24,19 @@ function CommunePicker({
 }) {
   const sb = supabaseBrowser()
   const [q, setQ] = useState('')
-  const [options, setOptions] = useState<{ code_nis: string; name_fr: string }[]>([])
+  const [options, setOptions] = useState<CommuneOption[]>([])
+
   useEffect(() => {
     let active = true
     const load = async () => {
-      if (!q || q.trim().length < 2) { setOptions([]); return }
+      const term = q.trim()
+      if (term.length < 2) { setOptions([]); return }
       const { data } = await sb
         .from('communes_be')
         .select('code_nis,name_fr')
-        .ilike('name_fr', `%${q.trim()}%`)
+        .ilike('name_fr', `%${term}%`)
         .limit(8)
-      if (active) setOptions(data ?? [])
+      if (active) setOptions((data ?? []) as CommuneOption[])
     }
     load()
     return () => { active = false }
@@ -90,33 +94,33 @@ function CommunePicker({
   )
 }
 
-type LocationDraft =
-  | {
-      id?: number
-      mode: 'cabinet'
-      address: string
-      postal_code: string
-      city: string
-      country: 'BE'
-      communes?: never
-    }
-  | {
-      id?: number
-      mode: 'domicile'
-      address?: string
-      postal_code?: string
-      city?: string
-      country: 'BE'
-      communes: string[]          // codes NIS
-    }
+/* ---------- Spécialités (référentiel) ---------- */
+type SpecRow = { slug: string; label: string; parent_slug: string | null }
+
+/* ---------- Localisations (unions discriminées) ---------- */
+type CabinetDraft = {
+  id?: number
+  mode: 'cabinet'
+  address: string
+  postal_code: string
+  city: string
+  country: 'BE'
+}
+type DomicileDraft = {
+  id?: number
+  mode: 'domicile'
+  country: 'BE'
+  communes: string[] // codes NIS
+}
+type LocationDraft = CabinetDraft | DomicileDraft
 
 export default function OnboardForm() {
   const sb = supabaseBrowser()
 
   // --- spécialités depuis la DB ---
-  const [specs, setSpecs] = useState<{ slug: string; label: string; parent_slug: string | null }[]>([])
+  const [specs, setSpecs] = useState<SpecRow[]>([])
   useEffect(() => {
-    sb.from('specialties').select('slug,label,parent_slug').then(({ data }) => setSpecs(data ?? []))
+    sb.from('specialties').select('slug,label,parent_slug').then(({ data }) => setSpecs((data ?? []) as SpecRow[]))
   }, [sb])
 
   const roots = useMemo(() => specs.filter(s => !s.parent_slug), [specs])
@@ -159,8 +163,13 @@ export default function OnboardForm() {
     ])
   }
   const removeLocation = (idx: number) => setLocations(v => v.filter((_, i) => i !== idx))
-  const updateLoc = (idx: number, patch: Partial<LocationDraft>) =>
-    setLocations(v => v.map((l, i) => (i === idx ? { ...l, ...patch } as LocationDraft : l)))
+
+  // surcharges pour patch strict typé
+  function updateLoc(idx: number, patch: Partial<CabinetDraft>): void
+  function updateLoc(idx: number, patch: Partial<DomicileDraft>): void
+  function updateLoc(idx: number, patch: Partial<LocationDraft>): void {
+    setLocations(v => v.map((l, i) => (i === idx ? ({ ...l, ...patch } as LocationDraft) : l)))
+  }
 
   const toggle = (key: 'languages' | 'specialties', value: string) =>
     setForm(v => ({ ...v, [key]: v[key].includes(value) ? v[key].filter(x => x !== value) : [...v[key], value] }))
@@ -193,10 +202,6 @@ export default function OnboardForm() {
 
     setLoading(true)
     try {
-      // IMPORTANT: ton endpoint doit accepter `locations` et gérer:
-      // - INSERT therapist (si nouveau) + relations languages/specialties
-      // - UPSERT therapist_locations
-      // - UPSERT therapist_location_communes pour les entités 'domicile'
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -204,15 +209,16 @@ export default function OnboardForm() {
           ...form,
           price_min: min,
           price_max: max,
-          locations, // <— NOUVEAU
+          locations, // ← cabinet[] & domicile[]
         }),
       })
-      const json = await res.json()
+      const json: { ok?: boolean; error?: string; slug?: string } = await res.json()
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API')
       setOk('Profil créé ! Vous pouvez maintenant voir votre fiche publique.')
       // window.location.assign(`/ergo/${json.slug}`)
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Erreur inconnue')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erreur inconnue'
+      setErr(msg)
     } finally {
       setLoading(false)
     }
@@ -300,18 +306,32 @@ export default function OnboardForm() {
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Localisations</div>
           <div className="flex gap-2">
-            <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('cabinet')}>Ajouter un cabinet</button>
-            <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('domicile')}>Ajouter une zone à domicile</button>
+            <button
+              type="button"
+              className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
+              onClick={() => addLocation('cabinet')}
+            >
+              Ajouter un cabinet
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50"
+              onClick={() => addLocation('domicile')}
+            >
+              Ajouter une zone à domicile
+            </button>
           </div>
         </div>
 
         {locations.map((loc, idx) => (
-          <div key={idx} className="rounded-xl border p-3 space-y-3">
+          <div key={`${loc.mode}-${idx}-${loc.id ?? 'new'}`} className="rounded-xl border p-3 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium">
                 {loc.mode === 'cabinet' ? 'Cabinet' : 'À domicile'}
               </div>
-              <button type="button" className="text-sm text-red-600 hover:underline" onClick={() => removeLocation(idx)}>Supprimer</button>
+              <button type="button" className="text-sm text-red-600 hover:underline" onClick={() => removeLocation(idx)}>
+                Supprimer
+              </button>
             </div>
 
             {loc.mode === 'cabinet' ? (
@@ -333,8 +353,8 @@ export default function OnboardForm() {
               <div>
                 <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
                 <CommunePicker
-                  value={loc.communes ?? []}
-                  onChange={(codes) => updateLoc(idx, { communes: codes } as any)}
+                  value={loc.communes}
+                  onChange={(codes) => updateLoc(idx, { communes: codes })}
                 />
               </div>
             )}
@@ -346,22 +366,38 @@ export default function OnboardForm() {
       <div className="grid gap-3 md:grid-cols-3">
         <div>
           <label className="mb-1 block text-sm">Tarif min (€)</label>
-          <input className="input" inputMode="numeric" value={form.price_min} onChange={e => setForm(v => ({ ...v, price_min: e.target.value }))} />
+          <input
+            className="input"
+            inputMode="numeric"
+            value={form.price_min}
+            onChange={e => setForm(v => ({ ...v, price_min: e.target.value }))}
+          />
         </div>
         <div>
           <label className="mb-1 block text-sm">Tarif max (€)</label>
-          <input className="input" inputMode="numeric" value={form.price_max} onChange={e => setForm(v => ({ ...v, price_max: e.target.value }))} />
+          <input
+            className="input"
+            inputMode="numeric"
+            value={form.price_max}
+            onChange={e => setForm(v => ({ ...v, price_max: e.target.value }))}
+          />
         </div>
         <div>
           <label className="mb-1 block text-sm">Unité</label>
-          <select className="input" value={form.price_unit} onChange={e => setForm(v => ({ ...v, price_unit: e.target.value as 'hour' | 'session' }))}>
+          <select
+            className="input"
+            value={form.price_unit}
+            onChange={e => setForm(v => ({ ...v, price_unit: e.target.value as 'hour' | 'session' }))}
+          >
             <option value="hour">Par heure</option>
             <option value="session">Par séance</option>
           </select>
         </div>
       </div>
 
-      <button disabled={loading} className="btn">{loading ? 'Enregistrement…' : 'Créer mon profil'}</button>
+      <button disabled={loading} className="btn">
+        {loading ? 'Enregistrement…' : 'Créer mon profil'}
+      </button>
       {ok && <p className="text-sm text-green-700">{ok}</p>}
       {err && <p className="text-sm text-red-700">{err}</p>}
     </form>
