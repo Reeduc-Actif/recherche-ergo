@@ -16,7 +16,6 @@ const Payload = z.object({
 
 type Mode = 'cabinet' | 'domicile'
 
-// Row tel que renvoyé par la jointure Supabase (locations + therapists)
 type JoinedTherapist = {
   id: string
   slug: string
@@ -37,6 +36,11 @@ type JoinedLocation = {
   lon: number | null
   lat: number | null
   therapists: JoinedTherapist | null
+}
+
+/** Forme brute potentielle renvoyée par Supabase (therapists objet OU tableau) */
+type JoinedLocationRaw = Omit<JoinedLocation, 'therapists'> & {
+  therapists: JoinedTherapist | JoinedTherapist[] | null
 }
 
 type ApiRow = {
@@ -76,7 +80,6 @@ export async function POST(req: Request) {
         .from('therapist_languages')
         .select('therapist_id, language_code')
         .in('language_code', languages_filter)
-
       if (langErr) throw langErr
       therapistIdsByLang = Array.from(new Set((langs ?? []).map(r => r.therapist_id)))
     }
@@ -88,7 +91,6 @@ export async function POST(req: Request) {
         .from('therapist_specialties')
         .select('therapist_id, specialty_slug')
         .in('specialty_slug', specialties_filter)
-
       if (specErr) throw specErr
       therapistIdsBySpec = Array.from(new Set((specs ?? []).map(r => r.therapist_id)))
     }
@@ -134,9 +136,14 @@ export async function POST(req: Request) {
     const { data: locsData, error: locErr } = await q
     if (locErr) throw locErr
 
-    const locs = (locsData ?? []) as JoinedLocation[]
+    // 4bis) Normaliser l’array vs objet pour `therapists`
+    const locsRaw = (locsData ?? []) as JoinedLocationRaw[]
+    const locs: JoinedLocation[] = locsRaw.map((r) => ({
+      ...r,
+      therapists: Array.isArray(r.therapists) ? (r.therapists[0] ?? null) : r.therapists,
+    }))
 
-    // 5) Mise en forme typée (plus de `any`)
+    // 5) Projection
     const results: ApiRow[] = locs
       .filter((r) => Boolean(r.therapists?.is_published))
       .map((r) => {
@@ -160,6 +167,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, results })
   } catch (e) {
+    // eslint-disable-next-line no-console
     console.error('[API /api/search] Fatal:', e)
     const message = e instanceof Error ? e.message : 'Server error'
     return NextResponse.json({ ok: false, error: message, results: [] as ApiRow[] }, { status: 500 })
