@@ -123,16 +123,15 @@ function SearchPageInner() {
     try {
       setLoading(true)
       const url = new URL('/api/search', window.location.origin)
-      url.searchParams.set('mode', m)
-      const res = await fetch(url.toString(), {
+        url.searchParams.set('mode', mode)
+        const res = await fetch(url.toString(), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          specialties_filter: specs.length ? specs : undefined,
-          languages_filter: langs.length ? langs : undefined,
-          // lat/lng/radius_km omis → pas de filtre géo
+            specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
+            languages_filter: selectedLangs.length ? selectedLangs : undefined,
         }),
-      })
+        })
       const json = (await res.json()) as { ok?: boolean; results?: Result[] }
       setResults(json.ok && json.results ? json.results : [])
     } catch {

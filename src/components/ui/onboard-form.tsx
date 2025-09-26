@@ -1,8 +1,9 @@
-// src/components/ui/onboard-form.tsx
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
+
+type Mode = 'cabinet' | 'domicile'
 
 const LANGS = [
   { value: 'fr', label: 'Français' },
@@ -10,14 +11,109 @@ const LANGS = [
   { value: 'de', label: 'Allemand' },
   { value: 'en', label: 'Anglais' },
 ]
-const MODES = [
-  { value: 'cabinet', label: 'Au cabinet' },
-  { value: 'domicile', label: 'À domicile' },
-  { value: 'visio', label: 'En visio' },
-]
+
+// --- composant léger d’autocomplétion sur la table communes_be ---
+function CommunePicker({
+  value,
+  onChange,
+}: {
+  value: string[]
+  onChange: (codes: string[]) => void
+}) {
+  const sb = supabaseBrowser()
+  const [q, setQ] = useState('')
+  const [options, setOptions] = useState<{ code_nis: string; name_fr: string }[]>([])
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      if (!q || q.trim().length < 2) { setOptions([]); return }
+      const { data } = await sb
+        .from('communes_be')
+        .select('code_nis,name_fr')
+        .ilike('name_fr', `%${q.trim()}%`)
+        .limit(8)
+      if (active) setOptions(data ?? [])
+    }
+    load()
+    return () => { active = false }
+  }, [q, sb])
+
+  return (
+    <div className="space-y-2">
+      <input
+        className="input w-full"
+        placeholder="Rechercher une commune…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {options.length > 0 && (
+        <div className="rounded-lg border">
+          {options.map(opt => {
+            const checked = value.includes(opt.code_nis)
+            return (
+              <label key={opt.code_nis} className="flex items-center gap-2 px-3 py-2 border-b last:border-b-0">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => {
+                    onChange(
+                      e.target.checked
+                        ? [...value, opt.code_nis]
+                        : value.filter(c => c !== opt.code_nis),
+                    )
+                  }}
+                />
+                <span className="text-sm">{opt.name_fr}</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {value.map(code => (
+            <span key={code} className="rounded-full border px-2 py-0.5 text-xs">
+              {code}
+              <button
+                type="button"
+                className="ml-1 text-neutral-500"
+                onClick={() => onChange(value.filter(c => c !== code))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type LocationDraft =
+  | {
+      id?: number
+      mode: 'cabinet'
+      address: string
+      postal_code: string
+      city: string
+      country: 'BE'
+      communes?: never
+    }
+  | {
+      id?: number
+      mode: 'domicile'
+      address?: string
+      postal_code?: string
+      city?: string
+      country: 'BE'
+      communes: string[]          // codes NIS
+    }
 
 export default function OnboardForm() {
   const sb = supabaseBrowser()
+
+  // --- spécialités depuis la DB ---
   const [specs, setSpecs] = useState<{ slug: string; label: string; parent_slug: string | null }[]>([])
   useEffect(() => {
     sb.from('specialties').select('slug,label,parent_slug').then(({ data }) => setSpecs(data ?? []))
@@ -44,36 +140,71 @@ export default function OnboardForm() {
     booking_url: '',
     languages: [] as string[],
     specialties: [] as string[],
-    modes: [] as string[],
-    address: '',
-    postal_code: '',
-    city: '',
-    country: 'BE',
     price_min: '',
     price_max: '',
     price_unit: 'hour' as 'hour' | 'session',
   })
 
-  const toggle = (key: 'languages' | 'specialties' | 'modes', value: string) =>
+  // --- nouvelles localisations (multi) ---
+  const [locations, setLocations] = useState<LocationDraft[]>([
+    { mode: 'cabinet', address: '', postal_code: '', city: '', country: 'BE' },
+  ])
+
+  const addLocation = (mode: Mode) => {
+    setLocations(v => [
+      ...v,
+      mode === 'cabinet'
+        ? { mode, address: '', postal_code: '', city: '', country: 'BE' }
+        : { mode, country: 'BE', communes: [] },
+    ])
+  }
+  const removeLocation = (idx: number) => setLocations(v => v.filter((_, i) => i !== idx))
+  const updateLoc = (idx: number, patch: Partial<LocationDraft>) =>
+    setLocations(v => v.map((l, i) => (i === idx ? { ...l, ...patch } as LocationDraft : l)))
+
+  const toggle = (key: 'languages' | 'specialties', value: string) =>
     setForm(v => ({ ...v, [key]: v[key].includes(value) ? v[key].filter(x => x !== value) : [...v[key], value] }))
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setOk(null); setErr(null)
-    if (!form.full_name) return setErr('Nom complet requis.')
+
+    if (!form.full_name.trim()) return setErr('Nom complet requis.')
     if (!form.languages.length) return setErr('Sélectionnez au moins une langue.')
     if (!form.specialties.length) return setErr('Sélectionnez au moins une spécialité.')
-    if (!form.address || !form.city || !form.postal_code) return setErr('Adresse complète requise.')
+
+    // validation localisations
+    if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
+    for (const loc of locations) {
+      if (loc.mode === 'cabinet') {
+        if (!loc.address || !loc.city || !loc.postal_code) {
+          return setErr('Chaque cabinet doit avoir adresse, ville et code postal.')
+        }
+      } else {
+        if (!loc.communes || loc.communes.length === 0) {
+          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
+        }
+      }
+    }
+
+    const min = form.price_min ? Number(form.price_min) : undefined
+    const max = form.price_max ? Number(form.price_max) : undefined
+    if (min && max && min > max) return setErr('Le tarif min. ne peut pas dépasser le max.')
 
     setLoading(true)
     try {
+      // IMPORTANT: ton endpoint doit accepter `locations` et gérer:
+      // - INSERT therapist (si nouveau) + relations languages/specialties
+      // - UPSERT therapist_locations
+      // - UPSERT therapist_location_communes pour les entités 'domicile'
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          price_min: form.price_min ? Number(form.price_min) : undefined,
-          price_max: form.price_max ? Number(form.price_max) : undefined,
+          price_min: min,
+          price_max: max,
+          locations, // <— NOUVEAU
         }),
       })
       const json = await res.json()
@@ -120,21 +251,98 @@ export default function OnboardForm() {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <div>
-          <label className="mb-1 block text-sm">Adresse</label>
-          <input className="input" value={form.address} onChange={e => setForm(v => ({ ...v, address: e.target.value }))} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm">Code postal</label>
-          <input className="input" value={form.postal_code} onChange={e => setForm(v => ({ ...v, postal_code: e.target.value }))} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm">Ville</label>
-          <input className="input" value={form.city} onChange={e => setForm(v => ({ ...v, city: e.target.value }))} />
+      {/* Langues */}
+      <div>
+        <div className="mb-1 text-sm">Langues</div>
+        <div className="flex flex-wrap gap-2">
+          {LANGS.map(l => (
+            <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+              <input type="checkbox" checked={form.languages.includes(l.value)} onChange={() => toggle('languages', l.value)} />
+              {l.label}
+            </label>
+          ))}
         </div>
       </div>
 
+      {/* Spécialités */}
+      <div className="space-y-2">
+        <div className="text-sm">Spécialités</div>
+        <div className="space-y-3">
+          {roots.map(root => (
+            <div key={root.slug} className="rounded-lg border p-3">
+              <div className="mb-2 font-medium">{root.label}</div>
+              <div className="flex flex-wrap gap-2">
+                {(childrenBy[root.slug] ?? []).map(sub => (
+                  <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.specialties.includes(sub.slug)}
+                      onChange={() =>
+                        setForm(v => ({
+                          ...v,
+                          specialties: v.specialties.includes(sub.slug)
+                            ? v.specialties.filter(s => s !== sub.slug)
+                            : [...v.specialties, sub.slug],
+                        }))
+                      }
+                    />
+                    {sub.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Localisations */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">Localisations</div>
+          <div className="flex gap-2">
+            <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('cabinet')}>Ajouter un cabinet</button>
+            <button type="button" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" onClick={() => addLocation('domicile')}>Ajouter une zone à domicile</button>
+          </div>
+        </div>
+
+        {locations.map((loc, idx) => (
+          <div key={idx} className="rounded-xl border p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">
+                {loc.mode === 'cabinet' ? 'Cabinet' : 'À domicile'}
+              </div>
+              <button type="button" className="text-sm text-red-600 hover:underline" onClick={() => removeLocation(idx)}>Supprimer</button>
+            </div>
+
+            {loc.mode === 'cabinet' ? (
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm">Adresse</label>
+                  <input className="input" value={loc.address} onChange={e => updateLoc(idx, { address: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm">Code postal</label>
+                  <input className="input" value={loc.postal_code} onChange={e => updateLoc(idx, { postal_code: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm">Ville</label>
+                  <input className="input" value={loc.city} onChange={e => updateLoc(idx, { city: e.target.value })} />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
+                <CommunePicker
+                  value={loc.communes ?? []}
+                  onChange={(codes) => updateLoc(idx, { communes: codes } as any)}
+                />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Tarifs */}
       <div className="grid gap-3 md:grid-cols-3">
         <div>
           <label className="mb-1 block text-sm">Tarif min (€)</label>
@@ -150,49 +358,6 @@ export default function OnboardForm() {
             <option value="hour">Par heure</option>
             <option value="session">Par séance</option>
           </select>
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-1 text-sm">Langues</div>
-        <div className="flex flex-wrap gap-2">
-          {LANGS.map(l => (
-            <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-              <input type="checkbox" checked={form.languages.includes(l.value)} onChange={() => toggle('languages', l.value)} />
-              {l.label}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="text-sm">Spécialités</div>
-        <div className="space-y-3">
-          {roots.map(root => (
-            <div key={root.slug} className="rounded-lg border p-3">
-              <div className="mb-2 font-medium">{root.label}</div>
-              <div className="flex flex-wrap gap-2">
-                {(childrenBy[root.slug] ?? []).map(sub => (
-                  <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                    <input type="checkbox" checked={form.specialties.includes(sub.slug)} onChange={() => toggle('specialties', sub.slug)} />
-                    {sub.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-1 text-sm">Modalités</div>
-        <div className="flex flex-wrap gap-2">
-          {MODES.map(m => (
-            <label key={m.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-              <input type="checkbox" checked={form.modes.includes(m.value)} onChange={() => toggle('modes', m.value)} />
-              {m.label}
-            </label>
-          ))}
         </div>
       </div>
 

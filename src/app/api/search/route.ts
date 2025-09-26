@@ -1,28 +1,18 @@
-// src/app/api/search/route.ts
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-import type { Feature, FeatureCollection } from 'geojson'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const BodyPayload = z.object({
-  lat: z.number().finite().optional(),
-  lng: z.number().finite().optional(),
-  radius_km: z.number().int().min(1).max(300).default(25),
-  specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
-  // modes_filter plus utile si tu passes "mode" en query, on le laisse optionnel pour rétro-compat
-  modes_filter: z.array(z.enum(['cabinet', 'domicile'])).nonempty().optional(),
-  languages_filter: z.array(z.string().min(1)).nonempty().optional(),
+const Payload = z.object({
+  specialties_filter: z.array(z.string().min(1)).optional(),
+  languages_filter: z.array(z.string().min(1)).optional(),
 })
 
-const ModeParam = z.enum(['cabinet', 'domicile']).default('cabinet')
-const ALLOWED_LANGS = new Set(['fr', 'nl', 'de', 'en'])
+const Mode = z.enum(['cabinet','domicile'])
 
-type Coverage = Feature | FeatureCollection | null
-
-type RpcRow = {
+type Result = {
   therapist_id: string
   slug: string
   full_name: string
@@ -33,50 +23,55 @@ type RpcRow = {
   city: string | null
   postal_code: string | null
   modes: string[] | null
-  distance_m: number | null
   lon: number | null
   lat: number | null
-  languages: string[] | null
-  coverage_radius_km: number | null
-  coverage_geojson: Coverage
+  coverage_geojson?: unknown | null
 }
 
-type Result = RpcRow
-
-async function parseRequest(req: Request) {
+export async function POST(req: Request) {
   const url = new URL(req.url)
-  const qsMode = url.searchParams.get('mode') ?? undefined
-  const mode = ModeParam.parse(qsMode)
-
-  if (req.method === 'POST') {
-    const body = await req.json().catch(() => ({}))
-    const parsed = BodyPayload.safeParse(body)
-    if (!parsed.success) {
-      return { error: 'Invalid payload', status: 400 } as const
-    }
-    return { mode, ...parsed.data } as const
+  const mode = Mode.parse(url.searchParams.get('mode'))
+  const body = await req.json().catch(() => ({}))
+  const parsed = Payload.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] }, { status: 400 })
   }
 
-  // GET
-  const lat = url.searchParams.get('lat')
-  const lng = url.searchParams.get('lng')
-  const radius = url.searchParams.get('radius_km')
-  const specialties = url.searchParams.getAll('specialties')
-  const languages = url.searchParams.getAll('languages')
+  const { specialties_filter, languages_filter } = parsed.data
+  const supabase = await supabaseServer()
 
-  return {
-    mode,
-    lat: lat ? Number(lat) : undefined,
-    lng: lng ? Number(lng) : undefined,
-    radius_km: radius ? Math.min(300, Math.max(1, Number(radius))) : 25,
-    specialties_filter: specialties.length ? specialties : undefined,
-    modes_filter: undefined,
-    languages_filter: languages.length ? languages : undefined,
-  } as const
+  const { data, error } = await supabase.rpc('search_therapists_by_mode', {
+    in_mode: mode,
+    in_specialties: specialties_filter?.length ? specialties_filter : null,
+    in_languages: languages_filter?.length ? languages_filter : null,
+  })
+
+  if (error) {
+    console.error('[search_therapists_by_mode]', error)
+    return NextResponse.json({ ok: false, error: error.message, results: [] }, { status: 500 })
+  }
+
+  const results: Result[] = (data ?? []).map((r: any) => ({
+    therapist_id: r.therapist_id,
+    slug: r.slug,
+    full_name: r.full_name,
+    headline: r.headline ?? null,
+    booking_url: r.booking_url ?? null,
+    location_id: r.location_id,
+    address: r.address ?? null,
+    city: r.city ?? null,
+    postal_code: r.postal_code ?? null,
+    modes: r.modes ?? null,
+    lon: r.lon ?? null,
+    lat: r.lat ?? null,
+    coverage_geojson: r.coverage_geojson ?? null,
+  }))
+
+  return NextResponse.json({ ok: true, results })
 }
 
-export async function GET(req: Request) {
-  return handler(req)
+export async function GET() {
+  return NextResponse.json({ ok: false, error: 'Use POST /api/search?mode=cabinet|domicile' }, { status: 405 })
 }
 export async function POST(req: Request) {
   return handler(req)
