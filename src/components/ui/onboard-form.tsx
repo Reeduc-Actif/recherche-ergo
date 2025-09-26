@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
+import AddressAutocomplete from '@/components/ui/AddressAutocomplete'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -105,6 +106,14 @@ type CabinetDraft = {
   postal_code: string
   city: string
   country: 'BE'
+  // méta géo (remplies par l'autocomplete)
+  lon?: number
+  lat?: number
+  street?: string
+  house_number?: string
+  place_name?: string
+  mapbox_id?: string
+  bbox?: number[]
 }
 type DomicileDraft = {
   id?: number
@@ -335,18 +344,24 @@ export default function OnboardForm() {
             </div>
 
             {loc.mode === 'cabinet' ? (
-              <div className="grid gap-3 md:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-sm">Adresse</label>
-                  <input className="input" value={loc.address} onChange={e => updateLoc(idx, { address: e.target.value })} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm">Code postal</label>
-                  <input className="input" value={loc.postal_code} onChange={e => updateLoc(idx, { postal_code: e.target.value })} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm">Ville</label>
-                  <input className="input" value={loc.city} onChange={e => updateLoc(idx, { city: e.target.value })} />
+              <div className="space-y-2">
+                <label className="mb-1 block text-sm">Adresse</label>
+                <AddressAutocomplete
+                  value={{ place_name: [loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') } as any}
+                  onChange={(a) =>
+                    updateLoc(idx, {
+                      address: [a.street, a.house_number].filter(Boolean).join(' '),
+                      postal_code: a.postal_code || '',
+                      city: a.city || '',
+                      country: 'BE',
+                      lon: a.lon, lat: a.lat,
+                      street: a.street, house_number: a.house_number,
+                      place_name: a.place_name, mapbox_id: a.mapbox_id, bbox: a.bbox,
+                    })
+                  }
+                />
+                <div className="text-xs text-neutral-500">
+                  {loc.lat && loc.lon ? 'Géolocalisé ✓' : 'Sélectionnez une suggestion pour valider l’adresse.'}
                 </div>
               </div>
             ) : (

@@ -1,206 +1,196 @@
-// src/app/api/pro/onboard/route.ts
 import { NextResponse } from 'next/server'
-import { z, ZodError } from 'zod'
+import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
 
+// --------- Zod ---------
+const CabinetZ = z.object({
+  id: z.number().optional(),
+  mode: z.literal('cabinet'),
+  address: z.string().min(1),
+  postal_code: z.string().min(1),
+  city: z.string().min(1),
+  country: z.literal('BE'),
+  lon: z.number().optional(),
+  lat: z.number().optional(),
+  street: z.string().optional().nullable(),
+  house_number: z.string().optional().nullable(),
+  place_name: z.string().optional().nullable(),
+  mapbox_id: z.string().optional().nullable(),
+  bbox: z.array(z.number()).length(4).optional().nullable(),
+})
+
+const DomicileZ = z.object({
+  id: z.number().optional(),
+  mode: z.literal('domicile'),
+  country: z.literal('BE'),
+  communes: z.array(z.string().min(1)).nonempty(), // codes NIS
+})
+
+const LocationZ = z.discriminatedUnion('mode', [CabinetZ, DomicileZ])
+
+const Payload = z.object({
+  full_name: z.string().min(2),
+  headline: z.string().optional(),
+  bio: z.string().optional(),
+  phone: z.string().optional(),
+  website: z.string().optional(),
+  booking_url: z.string().optional(),
+  languages: z.array(z.enum(['fr', 'nl', 'de', 'en'])).nonempty(),
+  specialties: z.array(z.string().min(1)).nonempty(),
+  price_min: z.number().optional(),
+  price_max: z.number().optional(),
+  price_unit: z.enum(['hour', 'session']).optional(),
+  // NEW
+  locations: z.array(LocationZ).min(1),
+})
+
+// --------- Helpers ---------
+function toWKT(lon?: number, lat?: number): string | null {
+  if (typeof lon === 'number' && typeof lat === 'number') {
+    return `SRID=4326;POINT(${lon} ${lat})`
+  }
+  return null
+}
+
+// --------- Route ---------
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-type DbError = { message?: string; details?: string; hint?: string; code?: string }
-
-function serializeError(err: unknown) {
-  if (err instanceof ZodError) {
-    return { ok: false, error: 'Données invalides', details: err.issues }
-  }
-  const e = err as Partial<DbError> | undefined
-  return {
-    ok: false,
-    error: e?.message ?? 'Erreur',
-    details: e?.details,
-    hint: e?.hint,
-    code: e?.code,
-  }
-}
-
-const emptyToUndef = <T,>(v: T) =>
-  v === '' || v === null || (typeof v === 'string' && v.trim() === '') ? undefined : v
-
-const Payload = z.object({
-  full_name: z.string().trim().min(2, 'Nom requis'),
-  headline: z.preprocess(emptyToUndef, z.string().trim().optional()),
-  phone: z.preprocess(emptyToUndef, z.string().trim().optional()),
-  booking_url: z.preprocess(emptyToUndef, z.string().url().optional()),
-  languages: z.array(z.enum(['fr', 'nl', 'de', 'en'])).nonempty('Choisir au moins une langue'),
-  specialties: z.array(z.string().min(1)).nonempty('Choisir au moins une spécialité'),
-  modes: z.preprocess(
-    (v) => (Array.isArray(v) ? v : []),
-    z.array(z.enum(['cabinet', 'domicile', 'visio'])).optional().default([])
-  ),
-  address: z.string().trim().min(2),
-  postal_code: z.string().trim().min(2),
-  city: z.string().trim().min(2),
-  country: z.preprocess(emptyToUndef, z.string().trim().default('BE')),
-  price_min: z.preprocess((v) => emptyToUndef(v), z.number().int().min(1).max(1000)).optional(),
-  price_max: z.preprocess((v) => emptyToUndef(v), z.number().int().min(1).max(1000)).optional(),
-  price_unit: z.preprocess(emptyToUndef, z.enum(['hour', 'session']).optional()),
-})
-
-type Geo = { lon: number | null; lat: number | null }
-
-async function geocode(addr: { address: string; postal_code: string; city: string; country: string }): Promise<Geo> {
-  try {
-    const token = process.env.MAPBOX_TOKEN_SERVER || process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-    if (!token) return { lon: null, lat: null }
-    const q = encodeURIComponent(`${addr.address}, ${addr.postal_code} ${addr.city}, ${addr.country}`)
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${q}.json?access_token=${token}&limit=1&country=be`
-    const res = await fetch(url, { cache: 'no-store' })
-    if (!res.ok) return { lon: null, lat: null }
-    const json = (await res.json()) as { features?: Array<{ center?: [number, number] }> }
-    const feat = json?.features?.[0]
-    if (feat?.center?.length === 2) {
-      const [lon, lat] = feat.center
-      return { lon: Number(lon), lat: Number(lat) }
-    }
-    return { lon: null, lat: null }
-  } catch (err) {
-    console.error('Geocode error:', err)
-    return { lon: null, lat: null }
-  }
-}
-
 export async function POST(req: Request) {
-  console.log('--- ONBOARD START ---')
-  const supabase = await supabaseServer()
-  const { data: auth } = await supabase.auth.getUser()
-  const user = auth?.user
-  if (!user) {
-    console.warn('Unauthenticated request')
-    return NextResponse.json({ ok: false, error: 'Unauthenticated' }, { status: 401 })
-  }
-  console.log('User OK:', user.id)
+  const sb = await supabaseServer()
 
-  // 1) parse
-  let input: z.infer<typeof Payload>
+  const body = await req.json().catch(() => ({}))
+  const parsed = Payload.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ ok: false, error: 'Invalid payload' }, { status: 400 })
+  }
+  const p = parsed.data
+
   try {
-    const raw = await req.json()
-    console.log('Payload reçu:', raw)
-    input = Payload.parse(raw)
-    console.log('Payload validé:', input)
-  } catch (err) {
-    console.error('Zod parse error:', err)
-    return NextResponse.json(serializeError(err), { status: 400 })
-  }
-  if (input.price_min && input.price_max && input.price_min > input.price_max) {
-    console.warn('price_min > price_max', input.price_min, input.price_max)
-    return NextResponse.json({ ok: false, error: 'price_min > price_max' }, { status: 400 })
-  }
-
-  // 2) spécialités whitelist
-  const { data: allowedSpecs, error: specsErr } = await supabase.from('specialties').select('slug')
-  if (specsErr) {
-    console.error('Specialties query error:', specsErr)
-    return NextResponse.json(serializeError(specsErr), { status: 400 })
-  }
-  const allowed = new Set((allowedSpecs ?? []).map((s) => s.slug as string))
-  const cleanSpecialties = (input.specialties ?? []).filter((s) => allowed.has(s))
-  console.log('Specialties filtrées:', cleanSpecialties)
-  if (cleanSpecialties.length === 0) {
-    console.warn('Aucune spécialité valide:', input.specialties)
-    return NextResponse.json({ ok: false, error: 'Aucune spécialité valide', received: input.specialties }, { status: 400 })
-  }
-
-  // 3) géocodage
-  const { lon, lat } = await geocode({
-    address: input.address,
-    postal_code: input.postal_code,
-    city: input.city,
-    country: input.country,
-  })
-  console.log('Coords géocodées:', lon, lat)
-
-  // 4) slug
-  const base = input.full_name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
-  let slug = base || `ergo-${user.id.slice(0, 8)}`
-  for (let i = 0; i < 5; i++) {
-    const { data: exists } = await supabase.from('therapists').select('id').eq('slug', slug).maybeSingle()
-    if (!exists) break
-    slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
-  }
-  console.log('Slug final:', slug)
-
-  // 5) transaction
-  try {
-    console.log('Insert therapist…')
-    const { data: th, error: e1 } = await supabase
+    // 1) Upsert therapist (par full_name + profil courant)
+    //    -> si tu as l’auth, récupère l’user/profile_id pour sécuriser.
+    const { data: th } = await sb
       .from('therapists')
-      .upsert({
-        slug,
-        profile_id: user.id,
-        full_name: input.full_name,
-        headline: input.headline ?? null,
-        email: user.email,
-        phone: input.phone ?? null,
-        website: null,
-        booking_url: input.booking_url ?? null,
-        price_hint: null,
-        price_min: input.price_min ?? null,
-        price_max: input.price_max ?? null,
-        price_unit: input.price_unit ?? null,
-        is_published: true,
-        is_approved: true,
-      }, { onConflict: 'profile_id' })
-      .select('id, slug')
-      .single()
-    if (e1) throw e1
-    const therapist_id = th!.id as string
-    console.log('Therapist OK:', therapist_id)
+      .select('id')
+      .ilike('full_name', p.full_name)
+      .limit(1)
+      .maybeSingle()
 
-    if (input.languages?.length) {
-      console.log('Insert languages:', input.languages)
-      const rows = input.languages.map((code) => ({ therapist_id, language_code: code }))
-      const { error: e2 } = await supabase.from('therapist_languages').upsert(rows, { onConflict: 'therapist_id,language_code', ignoreDuplicates: true })
-      if (e2) throw e2
+    const therapistId =
+      th?.id ??
+      (await sb
+        .from('therapists')
+        .insert({
+          full_name: p.full_name,
+          headline: p.headline ?? null,
+          bio: p.bio ?? null,
+          phone: p.phone ?? null,
+          website: p.website ?? null,
+          booking_url: p.booking_url ?? null,
+          price_min: p.price_min ?? null,
+          price_max: p.price_max ?? null,
+          price_unit: p.price_unit ?? null,
+          is_published: false,
+        })
+        .select('id')
+        .single()).data?.id
+
+    if (!therapistId) throw new Error('Therapist upsert failed')
+
+    // 2) Sync langues
+    await sb.from('therapist_languages').delete().eq('therapist_id', therapistId)
+    if (p.languages?.length) {
+      await sb.from('therapist_languages').insert(
+        p.languages.map(code => ({ therapist_id: therapistId, language_code: code }))
+      )
     }
 
-    if (cleanSpecialties.length) {
-      console.log('Insert specialties:', cleanSpecialties)
-      const rows = cleanSpecialties.map((s) => ({ therapist_id, specialty_slug: s }))
-      const { error: e3 } = await supabase.from('therapist_specialties').upsert(rows, { onConflict: 'therapist_id,specialty_slug', ignoreDuplicates: true })
-      if (e3) throw e3
+    // 3) Sync spécialités
+    await sb.from('therapist_specialties').delete().eq('therapist_id', therapistId)
+    if (p.specialties?.length) {
+      await sb.from('therapist_specialties').insert(
+        p.specialties.map(slug => ({ therapist_id: therapistId, specialty_slug: slug }))
+      )
     }
 
-    console.log('Insert/update location…')
-    const coordsWkt = lon != null && lat != null ? `SRID=4326;POINT(${lon} ${lat})` : null
-    const { data: locExists, error: locErr } = await supabase.from('therapist_locations').select('id').eq('therapist_id', therapist_id).limit(1)
-    if (locErr) throw locErr
+    // 4) Localisations : on *remplace* l’existant pour simplifier
+    const { data: oldLocs } = await sb
+      .from('therapist_locations')
+      .select('id')
+      .eq('therapist_id', therapistId)
 
-    if (!locExists || locExists.length === 0) {
-      const { error: e4 } = await supabase.from('therapist_locations').insert({
-        therapist_id,
-        address: input.address,
-        city: input.city,
-        postal_code: input.postal_code,
-        country: input.country,
-        modes: input.modes ?? [],
-        coords: coordsWkt,
-      })
-      if (e4) throw e4
-    } else {
-      const { error: e5 } = await supabase.from('therapist_locations').update({
-        address: input.address,
-        city: input.city,
-        postal_code: input.postal_code,
-        country: input.country,
-        modes: input.modes ?? [],
-        coords: coordsWkt,
-      }).eq('id', locExists[0].id)
-      if (e5) throw e5
+    const oldIds = (oldLocs ?? []).map(l => l.id)
+    if (oldIds.length) {
+      await sb.from('therapist_location_communes').delete().in('location_id', oldIds)
+      await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
     }
 
-    console.log('--- ONBOARD DONE ---')
-    return NextResponse.json({ ok: true, therapist_id, slug })
-  } catch (err) {
-    console.error('Onboard error:', err)
-    return NextResponse.json(serializeError(err), { status: 400 })
+    // 4.1 Insert cabinets
+    const cabinets = p.locations.filter(l => l.mode === 'cabinet') as z.infer<typeof CabinetZ>[]
+    let insertedCabinetIds: number[] = []
+    if (cabinets.length) {
+      const { data: ins } = await sb
+        .from('therapist_locations')
+        .insert(
+          cabinets.map(c => ({
+            therapist_id: therapistId,
+            address: c.address,
+            postal_code: c.postal_code,
+            city: c.city,
+            country: c.country,
+            modes: ['cabinet'],
+            // IMPORTANT: on renseigne *coords* (lon/lat peuvent être GENERATED)
+            coords: toWKT(c.lon, c.lat),
+            // méta
+            place_name: c.place_name ?? null,
+            mapbox_id: c.mapbox_id ?? null,
+            street: c.street ?? null,
+            house_number: c.house_number ?? null,
+            bbox: c.bbox ?? null,
+          }))
+        )
+        .select('id')
+      insertedCabinetIds = (ins ?? []).map(x => x.id)
+    }
+
+    // 4.2 Insert zones à domicile
+    const domiciles = p.locations.filter(l => l.mode === 'domicile') as z.infer<typeof DomicileZ>[]
+    if (domiciles.length) {
+      // une ligne par zone
+      const { data: insLocs } = await sb
+        .from('therapist_locations')
+        .insert(
+          domiciles.map(d => ({
+            therapist_id: therapistId,
+            address: null,
+            postal_code: null,
+            city: null,
+            country: d.country,
+            modes: ['domicile'],
+            coords: null,
+          }))
+        )
+        .select('id')
+
+      const domicileIds = (insLocs ?? []).map((x, i) => ({ id: x.id, communes: domiciles[i].communes }))
+      // communes pour chaque location
+      const rows = domicileIds.flatMap(d =>
+        d.communes.map(code => ({ location_id: d.id, commune_code: code }))
+      )
+      if (rows.length) {
+        await sb.from('therapist_location_communes').insert(rows)
+      }
+    }
+
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Server error'
+    // eslint-disable-next-line no-console
+    console.error('[onboard]', msg)
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
+}
+
+export async function GET() {
+  return NextResponse.json({ ok: false, error: 'Use POST /api/pro/onboard' }, { status: 405 })
 }
