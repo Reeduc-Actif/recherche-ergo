@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import AddressAutocomplete from '@/components/ui/AddressAutocomplete'
+import AddressAutocomplete, { AddressSuggestion } from '@/components/ui/AddressAutocomplete'
+import CityPicker from '@/components/ui/CityPicker'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -13,87 +14,7 @@ const LANGS = [
   { value: 'en', label: 'Anglais' },
 ]
 
-/* ---------- Communes (référentiel) ---------- */
-type CommuneOption = { code_nis: string; name_fr: string }
-
-function CommunePicker({
-  value,
-  onChange,
-}: {
-  value: string[]
-  onChange: (codes: string[]) => void
-}) {
-  const sb = supabaseBrowser()
-  const [q, setQ] = useState('')
-  const [options, setOptions] = useState<CommuneOption[]>([])
-
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      const term = q.trim()
-      if (term.length < 2) { setOptions([]); return }
-      const { data } = await sb
-        .from('communes_be')
-        .select('code_nis,name_fr')
-        .ilike('name_fr', `%${term}%`)
-        .limit(8)
-      if (active) setOptions((data ?? []) as CommuneOption[])
-    }
-    load()
-    return () => { active = false }
-  }, [q, sb])
-
-  return (
-    <div className="space-y-2">
-      <input
-        className="input w-full"
-        placeholder="Rechercher une commune…"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
-      {options.length > 0 && (
-        <div className="rounded-lg border">
-          {options.map(opt => {
-            const checked = value.includes(opt.code_nis)
-            return (
-              <label key={opt.code_nis} className="flex items-center gap-2 px-3 py-2 border-b last:border-b-0">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => {
-                    onChange(
-                      e.target.checked
-                        ? [...value, opt.code_nis]
-                        : value.filter(c => c !== opt.code_nis),
-                    )
-                  }}
-                />
-                <span className="text-sm">{opt.name_fr}</span>
-              </label>
-            )
-          })}
-        </div>
-      )}
-
-      {value.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {value.map(code => (
-            <span key={code} className="rounded-full border px-2 py-0.5 text-xs">
-              {code}
-              <button
-                type="button"
-                className="ml-1 text-neutral-500"
-                onClick={() => onChange(value.filter(c => c !== code))}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+/* use CityPicker component (cities_be repository) */
 
 /* ---------- Spécialités (référentiel) ---------- */
 type SpecRow = { slug: string; label: string; parent_slug: string | null }
@@ -119,7 +40,7 @@ type DomicileDraft = {
   id?: number
   mode: 'domicile'
   country: 'BE'
-  communes: string[] // codes NIS
+  cities: string[] // insee codes
 }
 type LocationDraft = CabinetDraft | DomicileDraft
 
@@ -168,7 +89,7 @@ export default function OnboardForm() {
       ...v,
       mode === 'cabinet'
         ? { mode, address: '', postal_code: '', city: '', country: 'BE' }
-        : { mode, country: 'BE', communes: [] },
+        : { mode, country: 'BE', cities: [] },
     ])
   }
   const removeLocation = (idx: number) => setLocations(v => v.filter((_, i) => i !== idx))
@@ -199,8 +120,8 @@ export default function OnboardForm() {
           return setErr('Chaque cabinet doit avoir adresse, ville et code postal.')
         }
       } else {
-        if (!loc.communes || loc.communes.length === 0) {
-          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
+        if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
+          return setErr('Chaque zone à domicile doit contenir au moins une ville.')
         }
       }
     }
@@ -367,10 +288,10 @@ export default function OnboardForm() {
               </div>
             ) : (
               <div>
-                <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
-                <CommunePicker
-                  value={loc.communes ?? []}
-                  onChange={(codes) => updateLoc(idx, { communes: codes } as Partial<{ communes: string[] }>)} 
+                <div className="mb-1 text-sm text-neutral-600">Villes couvertes</div>
+                <CityPicker
+                  value={(loc as DomicileDraft).cities ?? []}
+                  onChange={(codes) => updateLoc(idx, ({ cities: codes } as Partial<DomicileDraft>))}
                 />
               </div>
             )}
