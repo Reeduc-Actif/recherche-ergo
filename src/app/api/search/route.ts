@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
+import type { Feature, FeatureCollection } from 'geojson'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -11,12 +12,15 @@ const BodyPayload = z.object({
   lng: z.number().finite().optional(),
   radius_km: z.number().int().min(1).max(300).default(25),
   specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
+  // modes_filter plus utile si tu passes "mode" en query, on le laisse optionnel pour rétro-compat
   modes_filter: z.array(z.enum(['cabinet', 'domicile'])).nonempty().optional(),
   languages_filter: z.array(z.string().min(1)).nonempty().optional(),
 })
 
 const ModeParam = z.enum(['cabinet', 'domicile']).default('cabinet')
 const ALLOWED_LANGS = new Set(['fr', 'nl', 'de', 'en'])
+
+type Coverage = Feature | FeatureCollection | null
 
 type RpcRow = {
   therapist_id: string
@@ -34,7 +38,7 @@ type RpcRow = {
   lat: number | null
   languages: string[] | null
   coverage_radius_km: number | null
-  coverage_geojson: any | null
+  coverage_geojson: Coverage
 }
 
 type Result = RpcRow
@@ -47,7 +51,9 @@ async function parseRequest(req: Request) {
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     const parsed = BodyPayload.safeParse(body)
-    if (!parsed.success) return { error: 'Invalid payload', status: 400 } as const
+    if (!parsed.success) {
+      return { error: 'Invalid payload', status: 400 } as const
+    }
     return { mode, ...parsed.data } as const
   }
 

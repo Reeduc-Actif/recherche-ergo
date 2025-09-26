@@ -24,7 +24,30 @@ const MAX_BOUNDS: [[number, number], [number, number]] = [[2.0, 49.0], [7.0, 52.
 
 type Mode = 'cabinet' | 'domicile'
 
-// Hiérarchie des spécialités — slugs alignés avec la DB
+type Result = {
+  therapist_id: string
+  slug: string
+  full_name: string
+  headline: string | null
+  booking_url: string | null
+  location_id: number
+  address: string | null
+  city: string | null
+  postal_code: string | null
+  modes: string[] | null
+  distance_m: number | null
+  lon?: number | null
+  lat?: number | null
+  languages?: string[] | null
+  coverage_radius_km?: number | null
+  coverage_geojson?: import('geojson').Feature | import('geojson').FeatureCollection | null
+}
+
+type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
+const mb: MapboxWithTelemetry = mapboxgl
+if (typeof mb.setTelemetryEnabled === 'function') mb.setTelemetryEnabled(false)
+
+// Hiérarchie des spécialités (inchangé)
 const SPECIALTIES = [
   {
     slug: 'pediatrie',
@@ -62,37 +85,12 @@ const SPECIALTIES = [
   },
 ]
 
-// Visio supprimé
 const LANGUAGES = [
   { value: 'fr', label: 'Français' },
   { value: 'nl', label: 'Néerlandais' },
   { value: 'de', label: 'Allemand' },
   { value: 'en', label: 'Anglais' },
 ]
-
-type Result = {
-  therapist_id: string
-  slug: string
-  full_name: string
-  headline: string | null
-  booking_url: string | null
-  location_id: number
-  address: string | null
-  city: string | null
-  postal_code: string | null
-  modes: string[] | null
-  distance_m: number | null
-  lon?: number | null
-  lat?: number | null
-  languages?: string[] | null
-  // (optionnel si tu actives la couverture domicile plus tard)
-  coverage_radius_km?: number | null
-  coverage_geojson?: any | null
-}
-
-type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
-const mb: MapboxWithTelemetry = mapboxgl
-if (typeof mb.setTelemetryEnabled === 'function') mb.setTelemetryEnabled(false)
 
 export default function SearchPage() {
   return (
@@ -123,7 +121,6 @@ function SearchPageInner() {
   const urlLng = Number(searchParams.get('lng'))
   const urlR = Number(searchParams.get('r'))
 
-  // lecture mode (exclusif) — défaut: cabinet
   const urlMode = (searchParams.get('mode') as Mode) || 'cabinet'
 
   // Filtres depuis l’URL
@@ -145,9 +142,7 @@ function SearchPageInner() {
     Number.isFinite(urlR) ? clamp(Math.round(urlR), MIN_R, MAX_R) : DEFAULT_RADIUS_KM,
   )
   const radiusRef = useRef(radiusKm)
-  useEffect(() => {
-    radiusRef.current = radiusKm
-  }, [radiusKm])
+  useEffect(() => { radiusRef.current = radiusKm }, [radiusKm])
 
   const [selectedLangs, setSelectedLangs] = useState<string[]>(urlLangs)
   const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
@@ -161,7 +156,7 @@ function SearchPageInner() {
   })
   const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
 
-  // Helpers URL (mode exclusif)
+  // Helpers URL
   const updateUrl = useCallback(
     (
       lat: number,
@@ -185,7 +180,7 @@ function SearchPageInner() {
     [pathname, router, selectedSpecs, selectedLangs, mode],
   )
 
-  // Fetch résultats (envoie mode via querystring)
+  // Fetch résultats
   const fetchResults = useCallback(
     async (
       lat?: number,
@@ -241,12 +236,12 @@ function SearchPageInner() {
 
     m.addControl(new mapboxgl.NavigationControl(), 'top-right')
 
-    // marquer le premier geste utilisateur
     m.on('dragstart', () => { userMovedRef.current = true })
     m.on('zoomstart', () => { userMovedRef.current = true })
 
-    m.on('error', (ev: unknown) => {
-      const err = (ev as { error?: unknown })?.error ?? ev
+    m.on('error', (ev: mapboxgl.ErrorEvent | { error?: unknown }) => {
+      const err: unknown = 'error' in ev ? ev.error : ev
+      // eslint-disable-next-line no-console
       console.error('[Mapbox error]', err)
     })
 
@@ -255,7 +250,6 @@ function SearchPageInner() {
 
       const hasUrlCenter = Number.isFinite(urlLat) && Number.isFinite(urlLng)
       if (!hasUrlCenter) {
-        // centre direct sur la Belgique
         ignoreNextMoveRef.current = true
         m.fitBounds(BE_BOUNDS, { padding: 48, duration: 0 })
       }
@@ -307,7 +301,7 @@ function SearchPageInner() {
     updateUrl(c.lat, c.lng, radiusRef.current, selectedSpecs, selectedLangs, mode)
   }, [selectedSpecs, selectedLangs, mode, fetchResults, updateUrl])
 
-  // Marqueurs + popups + fitBounds (auto-fit si l’utilisateur n’a pas bougé)
+  // Marqueurs + popups + fitBounds
   useEffect(() => {
     const m = mapRef.current
     if (!m) return
@@ -354,7 +348,6 @@ function SearchPageInner() {
     }
   }, [results])
 
-  // Liste
   const items = useMemo(
     () =>
       results.map((r) => ({
@@ -398,102 +391,17 @@ function SearchPageInner() {
         <div className="rounded-xl border p-3 space-y-3">
           <div className="text-sm font-medium">Filtres</div>
 
-          {/* Spécialités (accordéons) */}
-          <div className="space-y-2">
-            <div className="text-xs text-neutral-500">Spécialités</div>
-
-            <div className="space-y-2">
-              {SPECIALTIES.map((cat) => {
-                const selectedInCat = cat.children.filter((sub) => selectedSpecs.includes(sub.slug)).length
-
-                return (
-                  <div key={cat.slug} className="rounded-lg border">
-                    <button
-                      type="button"
-                      onClick={() => toggleCat(cat.slug)}
-                      className="flex w-full items-center justify-between px-3 py-2"
-                    >
-                      <span className="font-medium">
-                        {cat.label}
-                        {selectedInCat > 0 && (
-                          <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                            {selectedInCat}
-                          </span>
-                        )}
-                      </span>
-                      <span
-                        className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`}
-                        aria-hidden
-                      >
-                        ▶
-                      </span>
-                    </button>
-
-                    <div
-                      className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'
-                        }`}
-                    >
-                      <div className="flex flex-wrap gap-2 px-3 pb-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const allSlugs = cat.children.map((c) => c.slug)
-                            const allSelected = allSlugs.every((s) => selectedSpecs.includes(s))
-                            setSelectedSpecs((prev) =>
-                              allSelected ? prev.filter((s) => !allSlugs.includes(s)) : Array.from(new Set([...prev, ...allSlugs])),
-                            )
-                          }}
-                          className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
-                        >
-                          {cat.children.every((s) => selectedSpecs.includes(s.slug)) ? 'Tout désélectionner' : 'Tout sélectionner'}
-                        </button>
-
-                        {cat.children.map((sub) => {
-                          const checked = selectedSpecs.includes(sub.slug)
-                          return (
-                            <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) =>
-                                  setSelectedSpecs((prev) =>
-                                    e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug),
-                                  )
-                                }
-                              />
-                              {sub.label}
-                            </label>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+          {/* Spécialités */}
+          <SpecialtiesFilter
+            selectedSpecs={selectedSpecs}
+            setSelectedSpecs={setSelectedSpecs}
+          />
 
           {/* Langues */}
-          <div className="space-y-2">
-            <div className="text-xs text-neutral-500">Langues</div>
-            <div className="flex flex-wrap gap-2">
-              {LANGUAGES.map((l) => {
-                const checked = selectedLangs.includes(l.value)
-                return (
-                  <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) =>
-                        setSelectedLangs((prev) => (e.target.checked ? [...prev, l.value] : prev.filter((x) => x !== l.value)))
-                      }
-                    />
-                    {l.label}
-                  </label>
-                )
-              })}
-            </div>
-          </div>
+          <LanguagesFilter
+            selectedLangs={selectedLangs}
+            setSelectedLangs={setSelectedLangs}
+          />
 
           {/* Rayon */}
           <div className="flex items-center gap-2 text-sm">
@@ -546,6 +454,121 @@ function SearchPageInner() {
         <div ref={mapDiv} className="h-[560px] min-h-[560px] w-full rounded-xl" />
       </section>
     </main>
+  )
+}
+
+function SpecialtiesFilter(props: {
+  selectedSpecs: string[]
+  setSelectedSpecs: React.Dispatch<React.SetStateAction<string[]>>
+}) {
+  const { selectedSpecs, setSelectedSpecs } = props
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({
+    pediatrie: false,
+    adulte: false,
+    geriatrie: false,
+  })
+  const toggleCat = (slug: string) => setOpenCats((prev) => ({ ...prev, [slug]: !prev[slug] }))
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-neutral-500">Spécialités</div>
+      <div className="space-y-2">
+        {SPECIALTIES.map((cat) => {
+          const selectedInCat = cat.children.filter((sub) => selectedSpecs.includes(sub.slug)).length
+          return (
+            <div key={cat.slug} className="rounded-lg border">
+              <button
+                type="button"
+                onClick={() => toggleCat(cat.slug)}
+                className="flex w-full items-center justify-between px-3 py-2"
+              >
+                <span className="font-medium">
+                  {cat.label}
+                  {selectedInCat > 0 && (
+                    <span className="ml-2 rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                      {selectedInCat}
+                    </span>
+                  )}
+                </span>
+                <span className={`transition-transform ${openCats[cat.slug] ? 'rotate-90' : ''}`} aria-hidden>
+                  ▶
+                </span>
+              </button>
+
+              <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${openCats[cat.slug] ? 'max-h-80' : 'max-h-0'}`}>
+                <div className="flex flex-wrap gap-2 px-3 pb-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allSlugs = cat.children.map((c) => c.slug)
+                      const allSelected = allSlugs.every((s) => selectedSpecs.includes(s))
+                      setSelectedSpecs((prev) =>
+                        allSelected ? prev.filter((s) => !allSlugs.includes(s)) : Array.from(new Set([...prev, ...allSlugs])),
+                      )
+                    }}
+                    className="rounded-lg border px-2 py-1 text-xs hover:bg-neutral-50"
+                  >
+                    {cat.children.every((s) => selectedSpecs.includes(s.slug)) ? 'Tout désélectionner' : 'Tout sélectionner'}
+                  </button>
+
+                  {cat.children.map((sub) => {
+                    const checked = selectedSpecs.includes(sub.slug)
+                    return (
+                      <label key={sub.slug} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setSelectedSpecs((prev) =>
+                              e.target.checked ? [...prev, sub.slug] : prev.filter((x) => x !== sub.slug),
+                            )
+                          }
+                        />
+                        {sub.label}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function LanguagesFilter(props: {
+  selectedLangs: string[]
+  setSelectedLangs: React.Dispatch<React.SetStateAction<string[]>>
+}) {
+  const { selectedLangs, setSelectedLangs } = props
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-neutral-500">Langues</div>
+      <div className="flex flex-wrap gap-2">
+        {[
+          { value: 'fr', label: 'Français' },
+          { value: 'nl', label: 'Néerlandais' },
+          { value: 'de', label: 'Allemand' },
+          { value: 'en', label: 'Anglais' },
+        ].map((l) => {
+          const checked = selectedLangs.includes(l.value)
+          return (
+            <label key={l.value} className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) =>
+                  setSelectedLangs((prev) => (e.target.checked ? [...prev, l.value] : prev.filter((x) => x !== l.value)))
+                }
+              />
+              {l.label}
+            </label>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
