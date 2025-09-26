@@ -466,9 +466,10 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                 <div className="space-y-2">
                   <label className="mb-1 block text-sm">Adresse</label>
                   <AddressAutocomplete
-                    value={{ place_name: [loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') } as any}
-                    onChange={(a) =>
-                      updateLoc(idx, {
+                    value={[loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
+                    onChange={() => { /* noop: we only use onSelect for full suggestion */ }}
+                    onSelect={(a) =>
+                      updateLoc(idx, ({
                         address: [a.street, a.house_number].filter(Boolean).join(' '),
                         postal_code: a.postal_code || '',
                         city: a.city || '',
@@ -476,7 +477,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                         lon: a.lon, lat: a.lat,
                         street: a.street, house_number: a.house_number,
                         place_name: a.place_name, mapbox_id: a.mapbox_id, bbox: a.bbox,
-                      })
+                      } as Partial<CabinetDraft>))
                     }
                   />
                   <div className="text-xs text-neutral-500">
