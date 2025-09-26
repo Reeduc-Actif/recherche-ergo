@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import AddressAutocomplete from '@/components/ui/AddressAutocomplete'
+import AddressAutocomplete, { AddressSuggestion } from '@/components/ui/AddressAutocomplete'
 import CityPicker from '@/components/ui/CityPicker'
 
 type Mode = 'cabinet' | 'domicile'
@@ -390,9 +390,9 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                   <AddressAutocomplete
                     value={[loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
                     onChange={() => { /* noop: we only use onSelect for full suggestion */ }}
-                    onSelect={(a) =>
+                    onSelect={(a: AddressSuggestion) =>
                       updateLoc(idx, ({
-                        address: [a.street, a.house_number].filter(Boolean).join(' '),
+                        address: [a.street ?? '', a.house_number ?? ''].filter(Boolean).join(' '),
                         postal_code: a.postal_code || '',
                         city: a.city || '',
                         country: 'BE',

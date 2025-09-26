@@ -270,9 +270,9 @@ export default function OnboardForm() {
                 <AddressAutocomplete
                   value={[loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
                   onChange={() => { /* noop, selection handled via onSelect */ }}
-                  onSelect={(a) =>
+                  onSelect={(a: AddressSuggestion) =>
                     updateLoc(idx, ({
-                      address: [a.street, a.house_number].filter(Boolean).join(' '),
+                      address: [a.street ?? '', a.house_number ?? ''].filter(Boolean).join(' '),
                       postal_code: a.postal_code || '',
                       city: a.city || '',
                       country: 'BE',

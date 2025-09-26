@@ -10,6 +10,12 @@ export type AddressSuggestion = {
   country: 'BE'
   lon: number
   lat: number
+  // optional metadata filled from Mapbox feature
+  street?: string
+  house_number?: string
+  place_name?: string
+  mapbox_id?: string
+  bbox?: number[]
 }
 
 export type AddressAutocompleteProps = {
@@ -20,10 +26,13 @@ export type AddressAutocompleteProps = {
 }
 
 type MapboxFeature = {
+  id?: string
   place_name: string
   center: [number, number]
   context?: Array<{ id: string; text: string }>
   properties?: Record<string, unknown>
+  text?: string
+  bbox?: number[]
 }
 
 export default function AddressAutocomplete({
@@ -74,6 +83,9 @@ export default function AddressAutocomplete({
         const postal = ctx.find(c => c.id.startsWith('postcode'))?.text ?? ''
         const label = f.place_name
         const address = label.split(',')[0]?.trim() || label
+        // Mapbox sometimes exposes house number in properties.address and street in text
+        const house_number = (f.properties && (f.properties as any).address) || undefined
+        const street = (f.text) || (f.properties && (f.properties as any).street) || undefined
 
         return {
           label,
@@ -83,6 +95,11 @@ export default function AddressAutocomplete({
           country: 'BE',
           lon,
           lat,
+          street,
+          house_number,
+          place_name: f.place_name,
+          mapbox_id: f.id,
+          bbox: f.bbox,
         }
       })
 
