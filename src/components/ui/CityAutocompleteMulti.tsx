@@ -9,25 +9,25 @@ export interface CityOption {
   name_de: string | null
 }
 
-interface CityAutocompleteProps {
-  value: string
-  onChange: (city: string) => void
+interface CityAutocompleteMultiProps {
+  value: Array<number | string>
+  onChange: (cities: Array<number | string>) => void
   placeholder?: string
   locale?: 'fr' | 'nl' | 'de'
 }
 
-export default function CityAutocomplete({
+export default function CityAutocompleteMulti({
   value,
   onChange,
-  placeholder = 'Ville',
+  placeholder = 'Rechercher une ville…',
   locale = 'fr'
-}: CityAutocompleteProps) {
+}: CityAutocompleteMultiProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [options, setOptions] = useState<CityOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
-  const [inputValue, setInputValue] = useState(value)
+  const [inputValue, setInputValue] = useState('')
   
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
@@ -42,10 +42,10 @@ export default function CityAutocomplete({
     }
   }, [locale])
 
-  // Fonction pour rechercher les communes
+  // Fonction pour rechercher les villes
   const searchCities = useCallback(async (query: string) => {
-    // Ne pas faire d'appel si la query est vide
-    if (!query.trim()) {
+    // Ne pas faire d'appel si la query est vide ou trop courte
+    if (!query.trim() || query.length < 2) {
       setOptions([])
       setLoading(false)
       setError(false)
@@ -80,13 +80,6 @@ export default function CityAutocomplete({
     }, 250)
   }, [searchCities])
 
-  // Effet pour synchroniser inputValue avec value
-  useEffect(() => {
-    setInputValue(value)
-  }, [value])
-
-  // Effet pour la recherche initiale au focus - supprimé car on ne fait plus d'appel initial
-
   // Gestion des événements clavier
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!isOpen) {
@@ -112,11 +105,10 @@ export default function CityAutocomplete({
       case 'Enter':
         e.preventDefault()
         if (activeIndex >= 0 && activeIndex < options.length) {
-          const selectedCity = getCityName(options[activeIndex])
-          setInputValue(selectedCity)
-          onChange(selectedCity)
-          setIsOpen(false)
-          setActiveIndex(-1)
+          const selectedOption = options[activeIndex]
+          if (selectedOption.nis_code) {
+            toggleCity(selectedOption.nis_code)
+          }
         }
         break
       case 'Escape':
@@ -141,16 +133,26 @@ export default function CityAutocomplete({
   // Gestion du focus
   const handleFocus = () => {
     setIsOpen(true)
-    // Ne pas faire d'appel automatique au focus
+  }
+
+  // Fonction pour ajouter/retirer une ville
+  const toggleCity = (nisCode: number) => {
+    const hasCity = value.map(Number).includes(nisCode)
+    if (hasCity) {
+      onChange(value.filter(v => Number(v) !== nisCode))
+    } else {
+      onChange([...value, nisCode])
+    }
+    setInputValue('')
+    setIsOpen(false)
+    setActiveIndex(-1)
   }
 
   // Gestion du clic sur une option
   const handleOptionClick = (option: CityOption) => {
-    const cityName = getCityName(option)
-    setInputValue(cityName)
-    onChange(cityName)
-    setIsOpen(false)
-    setActiveIndex(-1)
+    if (option.nis_code) {
+      toggleCity(option.nis_code)
+    }
   }
 
   // Gestion du clic en dehors
@@ -189,15 +191,15 @@ export default function CityAutocomplete({
         placeholder={placeholder}
         role="combobox"
         aria-expanded={isOpen}
-        aria-controls={isOpen ? "city-list" : undefined}
-        aria-activedescendant={activeIndex >= 0 ? `city-option-${activeIndex}` : undefined}
+        aria-controls={isOpen ? "city-multi-list" : undefined}
+        aria-activedescendant={activeIndex >= 0 ? `city-multi-option-${activeIndex}` : undefined}
         aria-autocomplete="list"
       />
       
       {isOpen && (
         <ul
           ref={listRef}
-          id="city-list"
+          id="city-multi-list"
           className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"
           role="listbox"
         >
@@ -228,11 +230,12 @@ export default function CityAutocomplete({
           {!loading && !error && options.map((option, index) => {
             const cityName = getCityName(option)
             const isActive = index === activeIndex
+            const isSelected = option.nis_code ? value.map(Number).includes(option.nis_code) : false
             
             return (
               <li
                 key={`${option.nis_code}-${index}`}
-                id={`city-option-${index}`}
+                id={`city-multi-option-${index}`}
                 className={`px-3 py-2 text-sm cursor-pointer ${
                   isActive 
                     ? 'bg-blue-50 text-blue-900' 
@@ -242,7 +245,12 @@ export default function CityAutocomplete({
                 role="option"
                 aria-selected={isActive}
               >
-                <div className="font-medium">{cityName}</div>
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{cityName}</div>
+                  {isSelected && (
+                    <span className="text-xs text-green-600">✓</span>
+                  )}
+                </div>
                 {option.nis_code && (
                   <div className="text-xs text-gray-500">NIS: {option.nis_code}</div>
                 )}
@@ -250,6 +258,25 @@ export default function CityAutocomplete({
             )
           })}
         </ul>
+      )}
+
+      {/* Affichage des villes sélectionnées */}
+      {value.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {value.map(v => (
+            <span key={String(v)} className="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs">
+              {String(v)}
+              <button
+                type="button"
+                className="text-neutral-500 hover:text-red-600"
+                onClick={() => onChange(value.filter(x => String(x) !== String(v)))}
+                aria-label={`Supprimer ${String(v)}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
       )}
     </div>
   )

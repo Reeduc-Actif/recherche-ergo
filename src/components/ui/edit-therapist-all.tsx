@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import CityPicker from '@/components/ui/CityPicker'
 import CityAutocomplete from '@/components/ui/CityAutocomplete'
+import CityAutocompleteMulti from '@/components/ui/CityAutocompleteMulti'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -460,10 +460,12 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                 </div>
               ) : (
                 <div>
-                  <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
-                  <CityPicker
+                  <div className="mb-1 text-sm text-neutral-600">Villes couvertes</div>
+                  <CityAutocompleteMulti
                     value={loc.cities}
                     onChange={(codes) => updateLoc(idx, { cities: codes.map(String) } as Partial<DomicileDraft>)}
+                    placeholder="Rechercher une ville…"
+                    locale="fr"
                   />
                 </div>
               )}

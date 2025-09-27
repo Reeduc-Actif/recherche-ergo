@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import CityPicker from '@/components/ui/CityPicker'
 import CityAutocomplete from '@/components/ui/CityAutocomplete'
+import CityAutocompleteMulti from '@/components/ui/CityAutocompleteMulti'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -333,9 +333,11 @@ export default function OnboardForm() {
             ) : (
               <div>
                 <div className="mb-1 text-sm text-neutral-600">Villes couvertes</div>
-                <CityPicker
+                <CityAutocompleteMulti
                   value={(loc as DomicileDraft).cities ?? []}
                   onChange={(codes) => updateLoc(idx, ({ cities: codes } as Partial<DomicileDraft>))}
+                  placeholder="Rechercher une ville…"
+                  locale="fr"
                 />
               </div>
             )}
