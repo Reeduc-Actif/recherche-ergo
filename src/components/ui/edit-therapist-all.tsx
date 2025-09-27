@@ -152,16 +152,17 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         const countryBE = 'BE' as const
 
         if (modes.includes('domicile')) {
-          const { data: tlc } = await sb
-            .from('therapist_location_cities')
-            .select('city_insee')
-            .eq('location_id', l.id)
-          const rows = (tlc ?? []) as TLCRow[]
+          const { data: homeCities } = await sb
+            .from('therapist_home_municipalities')
+            .select('nis_code')
+            .eq('therapist_id', therapist.id)
+
+          const nisList = (homeCities ?? []).map((r: { nis_code: number }) => r.nis_code.toString())
+
           drafts.push({
-            id: l.id,
             mode: 'domicile',
-            country: countryBE,
-            cities: rows.map(x => x.city_insee),
+            country: 'BE',
+            cities: nisList,     // NIS list
           })
         }
         if (modes.includes('cabinet')) {

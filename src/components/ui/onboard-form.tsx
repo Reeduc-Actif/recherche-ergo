@@ -40,7 +40,7 @@ type DomicileDraft = {
   id?: number
   mode: 'domicile'
   country: 'BE'
-  cities: string[] // insee codes
+  cities: (number | string)[] // NIS
 }
 type LocationDraft = CabinetDraft | DomicileDraft
 

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
 
 // --------- Zod ---------
+// Cabinets = adresse complète (Mapbox/BeSt)
 const CabinetZ = z.object({
   id: z.number().optional(),
   mode: z.literal('cabinet'),
@@ -19,11 +20,13 @@ const CabinetZ = z.object({
   bbox: z.array(z.number()).length(4).optional().nullable(),
 })
 
+// Domicile = liste de communes (NIS), pas d’adresses
+const NisCode = z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/)])
 const DomicileZ = z.object({
-  id: z.number().optional(),
+  id: z.number().optional(), // ignoré désormais (on ne stocke plus de "location domicile")
   mode: z.literal('domicile'),
   country: z.literal('BE'),
-  cities: z.array(z.string().min(1)).nonempty(), // codes INSEE
+  cities: z.array(NisCode).nonempty(), // NIS list
 })
 
 const LocationZ = z.discriminatedUnion('mode', [CabinetZ, DomicileZ])
@@ -40,7 +43,6 @@ const Payload = z.object({
   price_min: z.number().optional(),
   price_max: z.number().optional(),
   price_unit: z.enum(['hour', 'session']).optional(),
-  // NEW
   locations: z.array(LocationZ).min(1),
 })
 
@@ -56,10 +58,10 @@ function toWKT(lon?: number, lat?: number): string | null {
   return null
 }
 
-// --------- Route ---------
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// --------- Route ---------
 export async function POST(req: Request) {
   const sb = await supabaseServer()
 
@@ -71,8 +73,8 @@ export async function POST(req: Request) {
   const p = parsed.data
 
   try {
-    // 1) Upsert therapist (par full_name + profil courant)
-    //    -> si tu as l’auth, récupère l’user/profile_id pour sécuriser.
+    // 1) Upsert therapist (simplifié par full_name).
+    //    Idéalement : sécuriser via l’auth (profile_id = user.id).
     const { data: th } = await sb
       .from('therapists')
       .select('id')
@@ -105,7 +107,7 @@ export async function POST(req: Request) {
     await sb.from('therapist_languages').delete().eq('therapist_id', therapistId)
     if (p.languages?.length) {
       await sb.from('therapist_languages').insert(
-        p.languages.map((code: string) => ({ therapist_id: therapistId, language_code: code }))
+        p.languages.map(code => ({ therapist_id: therapistId, language_code: code }))
       )
     }
 
@@ -113,38 +115,28 @@ export async function POST(req: Request) {
     await sb.from('therapist_specialties').delete().eq('therapist_id', therapistId)
     if (p.specialties?.length) {
       await sb.from('therapist_specialties').insert(
-        p.specialties.map((slug: string) => ({ therapist_id: therapistId, specialty_slug: slug }))
+        p.specialties.map(slug => ({ therapist_id: therapistId, specialty_slug: slug }))
       )
     }
 
-    // 4) Localisations : on *remplace* l’existant pour simplifier
-    const { data: oldLocs } = await sb
-      .from('therapist_locations')
-      .select('id')
-      .eq('therapist_id', therapistId)
+    // 4) Localisations
+    // On REPART SAIN : on supprime toutes les anciennes locations (cabinet/legacy)
+    // et on réinsère uniquement les CABINETS.
+    await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
 
-  const oldIds = ((oldLocs ?? []) as { id: number }[]).map((l: { id: number }) => l.id)
-    if (oldIds.length) {
-      await sb.from('therapist_location_cities').delete().in('location_id', oldIds)
-      await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
-    }
-
-    // 4.1 Insert cabinets
-  const cabinets = (p.locations.filter((l: Location) => l.mode === 'cabinet') as Cabinet[])
+    const cabinets = (p.locations.filter((l: Location) => l.mode === 'cabinet') as Cabinet[])
     if (cabinets.length) {
-      const { data: ins } = await sb
+      await sb
         .from('therapist_locations')
         .insert(
-          cabinets.map((c: Cabinet) => ({
+          cabinets.map(c => ({
             therapist_id: therapistId,
             address: c.address,
             postal_code: c.postal_code,
             city: c.city,
             country: c.country,
             modes: ['cabinet'],
-            // IMPORTANT: on renseigne *coords* (lon/lat peuvent être GENERATED)
             coords: toWKT(c.lon, c.lat),
-            // méta
             place_name: c.place_name ?? null,
             mapbox_id: c.mapbox_id ?? null,
             street: c.street ?? null,
@@ -152,38 +144,38 @@ export async function POST(req: Request) {
             bbox: c.bbox ?? null,
           }))
         )
-        .select('id')
-      // we don't need the inserted ids for now; avoid unused var
-      void ins
     }
 
-    // 4.2 Insert zones à domicile
-  const domiciles = p.locations.filter((l: Location): l is Domicile => l.mode === 'domicile')
-    if (domiciles.length) {
-      // une ligne par zone
-      const { data: insLocs } = await sb
-        .from('therapist_locations')
-        .insert(
-          domiciles.map((d: Domicile) => ({
-            therapist_id: therapistId,
-            address: null,
-            postal_code: null,
-            city: null,
-            country: d.country,
-            modes: ['domicile'],
-            coords: null,
-          }))
-        )
-        .select('id')
-      const ins = (insLocs ?? []) as { id: number }[]
-      const domicileIds = ins.map((x: { id: number }, i: number) => ({ id: x.id, cities: domiciles[i].cities }))
-      // cities (INSEE) pour chaque location
-      const rows = domicileIds.flatMap((d: { id: number; cities: string[] }) =>
-        d.cities.map((code: string) => ({ location_id: d.id, city_insee: code }))
+    // 5) Zones à domicile (communes NIS) -> therapist_home_municipalities
+    //    On synchronise l'ensemble (insert manquants / delete retirés).
+    const domiciles = (p.locations.filter((l: Location): l is Domicile => l.mode === 'domicile'))
+    const wantedNis = Array.from(
+      new Set(
+        domiciles.flatMap(d => d.cities.map(n => Number(n)).filter(n => Number.isFinite(n)))
       )
-      if (rows.length) {
-        await sb.from('therapist_location_cities').insert(rows)
-      }
+    )
+
+    // Lire l'existant
+    const { data: existingRows } = await sb
+      .from('therapist_home_municipalities')
+      .select('nis_code')
+      .eq('therapist_id', therapistId)
+
+    const haveNis = new Set((existingRows ?? []).map(r => Number(r.nis_code)))
+    const wantSet = new Set(wantedNis)
+
+    const toInsert = [...wantSet].filter(nis => !haveNis.has(nis)).map(nis => ({ therapist_id: therapistId, nis_code: nis }))
+    const toDelete = [...haveNis].filter(nis => !wantSet.has(nis))
+
+    if (toInsert.length) {
+      await sb.from('therapist_home_municipalities').insert(toInsert)
+    }
+    if (toDelete.length) {
+      await sb
+        .from('therapist_home_municipalities')
+        .delete()
+        .in('nis_code', toDelete)
+        .eq('therapist_id', therapistId)
     }
 
     return NextResponse.json({ ok: true })

@@ -1,21 +1,19 @@
 'use client'
-
 import { useEffect, useRef, useState } from 'react'
-import { supabaseBrowser } from '@/lib/supabase-browser'
 
-export type CityOption = { insee: string; name_fr: string }
+type CityOption = { nis_code: number; label: string }
 
 export type CityPickerProps = {
-  value: string[]
-  onChange: (next: string[]) => void
+  value: Array<number | string>            // NIS list
+  onChange: (next: Array<number | string>) => void
   placeholder?: string
+  locale?: 'fr' | 'nl' | 'de'
 }
 
-export default function CityPicker({ value, onChange, placeholder = 'Search a Belgian city…' }: CityPickerProps) {
-  const sb = supabaseBrowser()
+export default function CityPicker({ value, onChange, placeholder = 'Rechercher une commune…', locale = 'fr' }: CityPickerProps) {
   const [q, setQ] = useState('')
-  const [options, setOptions] = useState<CityOption[]>([])
   const [open, setOpen] = useState(false)
+  const [options, setOptions] = useState<CityOption[]>([])
   const boxRef = useRef<HTMLDivElement | null>(null)
   const timer = useRef<number | null>(null)
 
@@ -33,19 +31,23 @@ export default function CityPicker({ value, onChange, placeholder = 'Search a Be
     const term = q.trim()
     timer.current = window.setTimeout(async () => {
       if (term.length < 2) { setOptions([]); return }
-      const { data } = await sb
-        .from('cities_be')
-        .select('insee,name_fr')
-        .ilike('name_fr', `%${term}%`)
-        .limit(12)
-      setOptions((data ?? []) as CityOption[])
+      const url = `/api/best/municipalities?q=${encodeURIComponent(term)}&page=1`
+      const res = await fetch(url)
+      if (!res.ok) { setOptions([]); return }
+      const json: { items: any[] } = await res.json()
+      const opts = (json.items ?? []).map(m => {
+        const label = m?.[`name_${locale}`] ?? m?.name_fr ?? m?.name_nl ?? m?.name_de ?? `${m.nis_code}`
+        return { nis_code: Number(m.nis_code), label }
+      }) as CityOption[]
+      setOptions(opts)
       setOpen(true)
     }, 250)
     return () => { if (timer.current) window.clearTimeout(timer.current) }
-  }, [q, sb])
+  }, [q, locale])
 
-  const toggle = (code: string) => {
-    onChange(value.includes(code) ? value.filter(c => c !== code) : [...value, code])
+  const toggle = (nis: number) => {
+    const has = value.map(Number).includes(nis)
+    onChange(has ? value.filter(v => Number(v) !== nis) : [...value, nis])
   }
 
   return (
@@ -58,27 +60,22 @@ export default function CityPicker({ value, onChange, placeholder = 'Search a Be
         onFocus={() => { if (options.length > 0) setOpen(true) }}
         role="combobox"
         aria-expanded={open}
-        aria-controls="citypicker-listbox"
       />
       {open && options.length > 0 && (
-        <div
-          id="citypicker-listbox"
-          className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow"
-          role="listbox"
-        >
+        <div className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow" role="listbox">
           {options.map(opt => {
-            const checked = value.includes(opt.insee)
+            const checked = value.map(Number).includes(opt.nis_code)
             return (
               <button
-                key={opt.insee}
+                key={opt.nis_code}
                 type="button"
                 role="option"
                 aria-selected={checked}
-                onClick={() => toggle(opt.insee)}
+                onClick={() => toggle(opt.nis_code)}
                 className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-neutral-50"
               >
-                <span className="text-sm">{opt.name_fr}</span>
-                {checked && <span className="text-xs text-neutral-500">selected</span>}
+                <span className="text-sm">{opt.label}</span>
+                {checked && <span className="text-xs text-neutral-500">sélectionné</span>}
               </button>
             )
           })}
@@ -87,14 +84,14 @@ export default function CityPicker({ value, onChange, placeholder = 'Search a Be
 
       {value.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {value.map(code => (
-            <span key={code} className="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs">
-              {code}
+          {value.map(v => (
+            <span key={String(v)} className="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs">
+              {String(v)}
               <button
                 type="button"
                 className="text-neutral-500"
-                onClick={() => onChange(value.filter(c => c !== code))}
-                aria-label={`Remove ${code}`}
+                onClick={() => onChange(value.filter(x => String(x) !== String(v)))}
+                aria-label={`Remove ${String(v)}`}
               >
                 ×
               </button>
