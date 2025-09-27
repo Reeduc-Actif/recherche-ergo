@@ -56,13 +56,18 @@ export default function CityAutocomplete({
     setError(false)
     
     try {
+      console.log('CityAutocomplete - Searching for:', query)
       const response = await fetch(`/api/best/municipalities?q=${encodeURIComponent(query)}&page=1`)
+      console.log('CityAutocomplete - Response status:', response.status)
       if (!response.ok) {
+        console.error('CityAutocomplete - API Error:', response.status, response.statusText)
         throw new Error('Erreur réseau')
       }
       const data = await response.json()
+      console.log('CityAutocomplete - API Response:', data)
       setOptions((data.items || []).slice(0, 8))
-    } catch {
+    } catch (err) {
+      console.error('CityAutocomplete - Search error:', err)
       setError(true)
       setOptions([])
     } finally {
