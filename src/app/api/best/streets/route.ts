@@ -64,6 +64,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ items, total: j.total, totalPages: j.totalPages });
   } catch (e: unknown) {
-    return NextResponse.json({ error: true, message: e?.message ?? "unexpected" }, { status: 500 });
+    const message = e instanceof Error ? e.message : "unexpected";
+    return NextResponse.json({ error: true, message }, { status: 500 });
   }
 }
