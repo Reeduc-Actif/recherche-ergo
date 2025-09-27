@@ -44,21 +44,11 @@ export default function CityAutocomplete({
 
   // Fonction pour rechercher les communes
   const searchCities = useCallback(async (query: string) => {
-    if (!query.trim() && query.length === 0) {
-      // Si pas de query, on affiche des suggestions initiales (top 8)
-      setLoading(true)
-      setError(false)
-      try {
-        const response = await fetch(`/api/best/municipalities?q=&page=1`)
-        if (!response.ok) throw new Error('Erreur réseau')
-        const data = await response.json()
-        setOptions((data.items || []).slice(0, 8))
-    } catch {
-      setError(true)
+    // Ne pas faire d'appel si la query est vide
+    if (!query.trim()) {
       setOptions([])
-    } finally {
-        setLoading(false)
-      }
+      setLoading(false)
+      setError(false)
       return
     }
 
@@ -93,12 +83,7 @@ export default function CityAutocomplete({
     setInputValue(value)
   }, [value])
 
-  // Effet pour la recherche initiale au focus
-  useEffect(() => {
-    if (isOpen && options.length === 0 && !loading) {
-      searchCities('')
-    }
-  }, [isOpen, options.length, loading, searchCities])
+  // Effet pour la recherche initiale au focus - supprimé car on ne fait plus d'appel initial
 
   // Gestion des événements clavier
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -154,9 +139,7 @@ export default function CityAutocomplete({
   // Gestion du focus
   const handleFocus = () => {
     setIsOpen(true)
-    if (options.length === 0) {
-      searchCities('')
-    }
+    // Ne pas faire d'appel automatique au focus
   }
 
   // Gestion du clic sur une option
@@ -228,7 +211,13 @@ export default function CityAutocomplete({
             </li>
           )}
           
-          {!loading && !error && options.length === 0 && (
+          {!loading && !error && options.length === 0 && inputValue.trim() === '' && (
+            <li className="px-3 py-2 text-sm text-gray-500">
+              Commencez à taper pour rechercher une commune
+            </li>
+          )}
+          
+          {!loading && !error && options.length === 0 && inputValue.trim() !== '' && (
             <li className="px-3 py-2 text-sm text-gray-500">
               Aucune commune trouvée
             </li>
