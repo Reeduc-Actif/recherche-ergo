@@ -411,7 +411,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
                   <div className="mb-1 text-sm text-neutral-600">Communes couvertes</div>
                   <CityPicker
                     value={loc.cities}
-                    onChange={(codes) => updateLoc(idx, { cities: codes })}
+                    onChange={(codes) => updateLoc(idx, { cities: codes.map(String) } as Partial<DomicileDraft>)}
                   />
                 </div>
               )}
