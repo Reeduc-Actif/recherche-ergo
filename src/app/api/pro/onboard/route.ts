@@ -73,111 +73,89 @@ export async function POST(req: Request) {
   const p = parsed.data
 
   try {
-    console.log('🔍 Starting onboard process for:', p.full_name)
-    
-    // 1) Upsert therapist (simplifié par full_name).
-    //    Idéalement : sécuriser via l'auth (profile_id = user.id).
-    console.log('🔍 Searching for existing therapist...')
-    const { data: th, error: searchError } = await sb
+    // 0) Auth obligatoire (RLS)
+    const { data: { user }, error: authErr } = await sb.auth.getUser()
+    if (authErr) {
+      console.error('❌ supabase.auth.getUser error:', authErr)
+      return NextResponse.json({ ok: false, error: 'Auth error' }, { status: 401 })
+    }
+    if (!user) {
+      return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // 1) Upsert therapist PAR profile_id (unique) → évite le SELECT bloqué par RLS
+    const upsertPayload = {
+      profile_id: user.id, // 🔑 essentiel pour passer la policy INSERT
+      full_name: p.full_name,
+      headline: p.headline ?? null,
+      bio: p.bio ?? null,
+      phone: p.phone ?? null,
+      website: p.website ?? null,
+      booking_url: p.booking_url ?? null,
+      price_min: p.price_min ?? null,
+      price_max: p.price_max ?? null,
+      price_unit: p.price_unit ?? null,
+      is_published: false,
+    } as const
+
+    const { data: thRow, error: upsertErr } = await sb
       .from('therapists')
-      .select('id')
-      .ilike('full_name', p.full_name)
-      .limit(1)
-      .maybeSingle()
+      .upsert(upsertPayload, { onConflict: 'profile_id' })
+      .select('id') // nécessite policy SELECT (using profile_id = auth.uid())
+      .single()
 
-    if (searchError) {
-      console.error('❌ Error searching therapist:', searchError)
-      throw new Error(`Search failed: ${searchError.message}`)
+    if (upsertErr) {
+      console.error('❌ Upsert therapists error:', upsertErr)
+      return NextResponse.json({ ok: false, error: `Therapist upsert failed: ${upsertErr.message}` }, { status: 500 })
     }
 
-    console.log('🔍 Existing therapist found:', th?.id || 'None')
-
-    let therapistId = th?.id
-    
+    const therapistId = thRow?.id
     if (!therapistId) {
-      console.log('🔍 Creating new therapist...')
-      const insertResult = await sb
-        .from('therapists')
-        .insert({
-          full_name: p.full_name,
-          headline: p.headline ?? null,
-          bio: p.bio ?? null,
-          phone: p.phone ?? null,
-          website: p.website ?? null,
-          booking_url: p.booking_url ?? null,
-          price_min: p.price_min ?? null,
-          price_max: p.price_max ?? null,
-          price_unit: p.price_unit ?? null,
-          is_published: false,
-        })
-        .select('id')
-        .single()
-
-      if (insertResult.error) {
-        console.error('❌ Error inserting therapist:', insertResult.error)
-        throw new Error(`Therapist insert failed: ${insertResult.error.message}`)
-      }
-
-      therapistId = insertResult.data?.id
-      console.log('✅ New therapist created with ID:', therapistId)
+      return NextResponse.json({ ok: false, error: 'Therapist upsert failed: no id' }, { status: 500 })
     }
 
-    if (!therapistId) throw new Error('Therapist upsert failed - no ID returned')
-
-    // 2) Sync langues
-    console.log('🔍 Syncing languages...')
-    const langDeleteResult = await sb.from('therapist_languages').delete().eq('therapist_id', therapistId)
-    if (langDeleteResult.error) {
-      console.error('❌ Error deleting languages:', langDeleteResult.error)
-      throw new Error(`Language delete failed: ${langDeleteResult.error.message}`)
+    // 2) Sync langues (delete puis insert) — policies JOIN sur therapists.profile_id = auth.uid()
+    const langDel = await sb.from('therapist_languages').delete().eq('therapist_id', therapistId)
+    if (langDel.error) {
+      console.error('❌ Language delete failed:', langDel.error)
+      return NextResponse.json({ ok: false, error: `Language delete failed: ${langDel.error.message}` }, { status: 500 })
     }
-    
     if (p.languages?.length) {
-      console.log('🔍 Inserting languages:', p.languages)
-      const langInsertResult = await sb.from('therapist_languages').insert(
+      const langIns = await sb.from('therapist_languages').insert(
         p.languages.map(code => ({ therapist_id: therapistId, language_code: code }))
       )
-      if (langInsertResult.error) {
-        console.error('❌ Error inserting languages:', langInsertResult.error)
-        throw new Error(`Language insert failed: ${langInsertResult.error.message}`)
+      if (langIns.error) {
+        console.error('❌ Language insert failed:', langIns.error)
+        return NextResponse.json({ ok: false, error: `Language insert failed: ${langIns.error.message}` }, { status: 500 })
       }
     }
 
     // 3) Sync spécialités
-    console.log('🔍 Syncing specialties...')
-    const specDeleteResult = await sb.from('therapist_specialties').delete().eq('therapist_id', therapistId)
-    if (specDeleteResult.error) {
-      console.error('❌ Error deleting specialties:', specDeleteResult.error)
-      throw new Error(`Specialty delete failed: ${specDeleteResult.error.message}`)
+    const specDel = await sb.from('therapist_specialties').delete().eq('therapist_id', therapistId)
+    if (specDel.error) {
+      console.error('❌ Specialty delete failed:', specDel.error)
+      return NextResponse.json({ ok: false, error: `Specialty delete failed: ${specDel.error.message}` }, { status: 500 })
     }
-    
     if (p.specialties?.length) {
-      console.log('🔍 Inserting specialties:', p.specialties)
-      const specInsertResult = await sb.from('therapist_specialties').insert(
+      const specIns = await sb.from('therapist_specialties').insert(
         p.specialties.map(slug => ({ therapist_id: therapistId, specialty_slug: slug }))
       )
-      if (specInsertResult.error) {
-        console.error('❌ Error inserting specialties:', specInsertResult.error)
-        throw new Error(`Specialty insert failed: ${specInsertResult.error.message}`)
+      if (specIns.error) {
+        console.error('❌ Specialty insert failed:', specIns.error)
+        return NextResponse.json({ ok: false, error: `Specialty insert failed: ${specIns.error.message}` }, { status: 500 })
       }
     }
 
-    // 4) Localisations
-    // On REPART SAIN : on supprime toutes les anciennes locations (cabinet/legacy)
-    // et on réinsère uniquement les CABINETS.
-    console.log('🔍 Syncing locations...')
-    const locDeleteResult = await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
-    if (locDeleteResult.error) {
-      console.error('❌ Error deleting locations:', locDeleteResult.error)
-      throw new Error(`Location delete failed: ${locDeleteResult.error.message}`)
+    // 4) Localisations (on purge et on réinsère uniquement les cabinets)
+    const locDel = await sb.from('therapist_locations').delete().eq('therapist_id', therapistId)
+    if (locDel.error) {
+      console.error('❌ Location delete failed:', locDel.error)
+      return NextResponse.json({ ok: false, error: `Location delete failed: ${locDel.error.message}` }, { status: 500 })
     }
 
     const cabinets = (p.locations.filter((l: Location) => l.mode === 'cabinet') as Cabinet[])
-    console.log('🔍 Found cabinets:', cabinets.length)
-    
     if (cabinets.length) {
-      console.log('🔍 Inserting cabinet locations...')
-      const locInsertResult = await sb
+      const locIns = await sb
         .from('therapist_locations')
         .insert(
           cabinets.map(c => ({
@@ -187,7 +165,7 @@ export async function POST(req: Request) {
             city: c.city,
             country: c.country,
             modes: ['cabinet'],
-            coords: toWKT(c.lon, c.lat),
+            coords: toWKT(c.lon, c.lat), // geography(Point,4326)
             place_name: c.place_name ?? null,
             mapbox_id: c.mapbox_id ?? null,
             street: c.street ?? null,
@@ -195,35 +173,28 @@ export async function POST(req: Request) {
             bbox: c.bbox ?? null,
           }))
         )
-      
-      if (locInsertResult.error) {
-        console.error('❌ Error inserting locations:', locInsertResult.error)
-        throw new Error(`Location insert failed: ${locInsertResult.error.message}`)
+      if (locIns.error) {
+        console.error('❌ Location insert failed:', locIns.error)
+        return NextResponse.json({ ok: false, error: `Location insert failed: ${locIns.error.message}` }, { status: 500 })
       }
     }
 
-    // 5) Zones à domicile (communes NIS) -> therapist_home_municipalities
-    //    On synchronise l'ensemble (insert manquants / delete retirés).
-    console.log('🔍 Syncing home municipalities...')
+    // 5) Domicile (NIS) → therapist_home_municipalities (sync différentiel)
     const domiciles = (p.locations.filter((l: Location): l is Domicile => l.mode === 'domicile'))
-    console.log('🔍 Found domiciles:', domiciles.length)
-    
     const wantedNis = Array.from(
       new Set(
         domiciles.flatMap(d => d.cities.map(n => Number(n)).filter(n => Number.isFinite(n)))
       )
     )
-    console.log('🔍 Wanted NIS codes:', wantedNis)
 
-    // Lire l'existant
     const { data: existingRows, error: homeReadError } = await sb
       .from('therapist_home_municipalities')
       .select('nis_code')
       .eq('therapist_id', therapistId)
 
     if (homeReadError) {
-      console.error('❌ Error reading home municipalities:', homeReadError)
-      throw new Error(`Home municipalities read failed: ${homeReadError.message}`)
+      console.error('❌ Home municipalities read failed:', homeReadError)
+      return NextResponse.json({ ok: false, error: `Home municipalities read failed: ${homeReadError.message}` }, { status: 500 })
     }
 
     const haveNis = new Set((existingRows ?? []).map(r => Number(r.nis_code)))
@@ -232,31 +203,25 @@ export async function POST(req: Request) {
     const toInsert = [...wantSet].filter(nis => !haveNis.has(nis)).map(nis => ({ therapist_id: therapistId, nis_code: nis }))
     const toDelete = [...haveNis].filter(nis => !wantSet.has(nis))
 
-    console.log('🔍 To insert:', toInsert.length, 'To delete:', toDelete.length)
-
     if (toInsert.length) {
-      console.log('🔍 Inserting home municipalities...')
-      const homeInsertResult = await sb.from('therapist_home_municipalities').insert(toInsert)
-      if (homeInsertResult.error) {
-        console.error('❌ Error inserting home municipalities:', homeInsertResult.error)
-        throw new Error(`Home municipalities insert failed: ${homeInsertResult.error.message}`)
+      const homeIns = await sb.from('therapist_home_municipalities').insert(toInsert)
+      if (homeIns.error) {
+        console.error('❌ Home municipalities insert failed:', homeIns.error)
+        return NextResponse.json({ ok: false, error: `Home municipalities insert failed: ${homeIns.error.message}` }, { status: 500 })
       }
     }
     if (toDelete.length) {
-      console.log('🔍 Deleting home municipalities...')
-      const homeDeleteResult = await sb
+      const homeDel = await sb
         .from('therapist_home_municipalities')
         .delete()
         .in('nis_code', toDelete)
         .eq('therapist_id', therapistId)
-      
-      if (homeDeleteResult.error) {
-        console.error('❌ Error deleting home municipalities:', homeDeleteResult.error)
-        throw new Error(`Home municipalities delete failed: ${homeDeleteResult.error.message}`)
+      if (homeDel.error) {
+        console.error('❌ Home municipalities delete failed:', homeDel.error)
+        return NextResponse.json({ ok: false, error: `Home municipalities delete failed: ${homeDel.error.message}` }, { status: 500 })
       }
     }
 
-    console.log('✅ Onboard process completed successfully!')
     return NextResponse.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Server error'
