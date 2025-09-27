@@ -64,7 +64,7 @@ type DomicileDraft = {
   id?: number
   mode: 'domicile'
   country: 'BE'
-  cities: string[]
+  cities: (number | string)[]
 }
 type LocationDraft = CabinetDraft | DomicileDraft
 
@@ -156,7 +156,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
             .select('nis_code')
             .eq('therapist_id', therapist.id)
 
-          const nisList = (homeCities ?? []).map((r: { nis_code: number }) => r.nis_code.toString())
+          const nisList = (homeCities ?? []).map((r: { nis_code: number }) => r.nis_code)
 
           drafts.push({
             mode: 'domicile',
