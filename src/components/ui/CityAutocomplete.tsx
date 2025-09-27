@@ -31,7 +31,7 @@ export default function CityAutocomplete({
   
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
-  const debounceRef = useRef<NodeJS.Timeout>()
+  const debounceRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
   // Fonction pour obtenir le nom de la ville selon la locale
   const getCityName = useCallback((option: CityOption) => {
@@ -53,10 +53,10 @@ export default function CityAutocomplete({
         if (!response.ok) throw new Error('Erreur réseau')
         const data = await response.json()
         setOptions((data.items || []).slice(0, 8))
-      } catch (err) {
-        setError(true)
-        setOptions([])
-      } finally {
+    } catch {
+      setError(true)
+      setOptions([])
+    } finally {
         setLoading(false)
       }
       return
@@ -70,7 +70,7 @@ export default function CityAutocomplete({
       if (!response.ok) throw new Error('Erreur réseau')
       const data = await response.json()
       setOptions((data.items || []).slice(0, 8))
-    } catch (err) {
+    } catch {
       setError(true)
       setOptions([])
     } finally {
@@ -204,6 +204,7 @@ export default function CityAutocomplete({
         placeholder={placeholder}
         role="combobox"
         aria-expanded={isOpen}
+        aria-controls={isOpen ? "city-list" : undefined}
         aria-activedescendant={activeIndex >= 0 ? `city-option-${activeIndex}` : undefined}
         aria-autocomplete="list"
       />
@@ -211,6 +212,7 @@ export default function CityAutocomplete({
       {isOpen && (
         <ul
           ref={listRef}
+          id="city-list"
           className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto"
           role="listbox"
         >
