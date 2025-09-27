@@ -62,18 +62,13 @@ export default function CityAutocompleteMulti({
     setError(false)
     
     try {
-      console.log('Searching for:', query)
       const response = await fetch(`/api/best/municipalities?q=${encodeURIComponent(query)}&page=1`)
-      console.log('Response status:', response.status)
       if (!response.ok) {
-        console.error('API Error:', response.status, response.statusText)
         throw new Error('Erreur réseau')
       }
       const data = await response.json()
-      console.log('API Response:', data)
       setOptions((data.items || []).slice(0, 8))
-    } catch (err) {
-      console.error('Search error:', err)
+    } catch {
       setError(true)
       setOptions([])
     } finally {
@@ -83,12 +78,10 @@ export default function CityAutocompleteMulti({
 
   // Debounce pour la recherche
   const debouncedSearch = useCallback((query: string) => {
-    console.log('Debounced search called with:', query)
     if (debounceRef.current) {
       clearTimeout(debounceRef.current)
     }
     debounceRef.current = setTimeout(() => {
-      console.log('Debounce timeout reached, calling searchCities with:', query)
       searchCities(query)
     }, 250)
   }, [searchCities])
@@ -133,12 +126,10 @@ export default function CityAutocompleteMulti({
   // Gestion du changement d'input
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
-    console.log('Input changed to:', newValue)
     setInputValue(newValue)
     setActiveIndex(-1)
     
     if (isOpen) {
-      console.log('Triggering debounced search for:', newValue)
       debouncedSearch(newValue)
     }
   }
@@ -196,29 +187,8 @@ export default function CityAutocompleteMulti({
     }
   }, [])
 
-  // Fonction de test pour déboguer l'API
-  const testAPI = async () => {
-    console.log('Testing API with "Bra"')
-    try {
-      const response = await fetch('/api/best/municipalities?q=Bra&page=1')
-      console.log('Test response status:', response.status)
-      const data = await response.json()
-      console.log('Test API Response:', data)
-    } catch (err) {
-      console.error('Test API Error:', err)
-    }
-  }
-
   return (
     <div className="relative">
-      {/* Bouton de test temporaire */}
-      <button 
-        type="button" 
-        onClick={testAPI}
-        className="mb-2 text-xs bg-blue-500 text-white px-2 py-1 rounded"
-      >
-        Test API "Bra"
-      </button>
       <input
         ref={inputRef}
         type="text"
