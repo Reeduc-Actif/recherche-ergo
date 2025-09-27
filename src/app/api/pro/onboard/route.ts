@@ -181,7 +181,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Server error'
-    // eslint-disable-next-line no-console
     console.error('[onboard]', msg)
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }

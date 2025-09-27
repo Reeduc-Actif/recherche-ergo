@@ -50,7 +50,7 @@ export async function GET(req: Request) {
     }
     const j = await r.json();
 
-    const items = (j.items ?? []).map((m: any) => ({
+    const items = (j.items ?? []).map((m: { nisCode?: string; name?: { fr?: string; nl?: string; de?: string } }) => ({
       nis_code: m.nisCode ? parseInt(m.nisCode, 10) : null,
       name_fr: m.name?.fr ?? null,
       name_nl: m.name?.nl ?? null,
@@ -58,7 +58,7 @@ export async function GET(req: Request) {
     }));
 
     return NextResponse.json({ items, total: j.total, totalPages: j.totalPages });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json({ error: true, message: e?.message ?? "unexpected" }, { status: 500 });
   }
 }

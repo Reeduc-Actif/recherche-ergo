@@ -43,7 +43,6 @@ type LocationRow = {
   modes: string[] | null
 }
 
-type TLCRow = { city_insee: string }
 
 /* --- Brouillons de localisation (discriminated union) --- */
 type CabinetDraft = {

@@ -34,7 +34,7 @@ export default function CityPicker({ value, onChange, placeholder = 'Rechercher 
       const url = `/api/best/municipalities?q=${encodeURIComponent(term)}&page=1`
       const res = await fetch(url)
       if (!res.ok) { setOptions([]); return }
-      const json: { items: any[] } = await res.json()
+      const json: { items: Array<{ nis_code: number; name_fr?: string; name_nl?: string; name_de?: string }> } = await res.json()
       const opts = (json.items ?? []).map(m => {
         const label = m?.[`name_${locale}`] ?? m?.name_fr ?? m?.name_nl ?? m?.name_de ?? `${m.nis_code}`
         return { nis_code: Number(m.nis_code), label }
@@ -60,9 +60,10 @@ export default function CityPicker({ value, onChange, placeholder = 'Rechercher 
         onFocus={() => { if (options.length > 0) setOpen(true) }}
         role="combobox"
         aria-expanded={open}
+        aria-controls="city-picker-listbox"
       />
       {open && options.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow" role="listbox">
+        <div id="city-picker-listbox" className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow" role="listbox">
           {options.map(opt => {
             const checked = value.map(Number).includes(opt.nis_code)
             return (

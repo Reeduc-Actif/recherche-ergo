@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     }
     const j = await r.json();
 
-    const items = (j.items ?? []).map((s: any) => ({
+    const items = (j.items ?? []).map((s: { id: string; name?: { fr?: string; nl?: string; de?: string } }) => ({
       id: s.id,
       name_fr: s.name?.fr ?? null,
       name_nl: s.name?.nl ?? null,
@@ -63,7 +63,7 @@ export async function GET(req: Request) {
     }));
 
     return NextResponse.json({ items, total: j.total, totalPages: j.totalPages });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json({ error: true, message: e?.message ?? "unexpected" }, { status: 500 });
   }
 }
