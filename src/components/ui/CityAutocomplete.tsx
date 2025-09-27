@@ -44,8 +44,8 @@ export default function CityAutocomplete({
 
   // Fonction pour rechercher les communes
   const searchCities = useCallback(async (query: string) => {
-    // Ne pas faire d'appel si la query est vide ou trop courte
-    if (!query.trim() || query.trim().length < 2) {
+    // Ne pas faire d'appel si la query est vide
+    if (!query.trim()) {
       setOptions([])
       setLoading(false)
       setError(false)
@@ -219,13 +219,7 @@ export default function CityAutocomplete({
             </li>
           )}
           
-          {!loading && !error && options.length === 0 && inputValue.trim().length > 0 && inputValue.trim().length < 2 && (
-            <li className="px-3 py-2 text-sm text-gray-500">
-              Tapez au moins 2 caractères
-            </li>
-          )}
-          
-          {!loading && !error && options.length === 0 && inputValue.trim().length >= 2 && (
+          {!loading && !error && options.length === 0 && inputValue.trim() !== '' && (
             <li className="px-3 py-2 text-sm text-gray-500">
               Aucune ville trouvée
             </li>

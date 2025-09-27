@@ -16,6 +16,11 @@ interface CityAutocompleteMultiProps {
   locale?: 'fr' | 'nl' | 'de'
 }
 
+interface SelectedCity {
+  nis_code: number
+  name: string
+}
+
 export default function CityAutocompleteMulti({
   value,
   onChange,
@@ -28,6 +33,7 @@ export default function CityAutocompleteMulti({
   const [error, setError] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [inputValue, setInputValue] = useState('')
+  const [selectedCities, setSelectedCities] = useState<SelectedCity[]>([])
   
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
@@ -44,8 +50,8 @@ export default function CityAutocompleteMulti({
 
   // Fonction pour rechercher les villes
   const searchCities = useCallback(async (query: string) => {
-    // Ne pas faire d'appel si la query est vide ou trop courte
-    if (!query.trim() || query.trim().length < 2) {
+    // Ne pas faire d'appel si la query est vide
+    if (!query.trim()) {
       setOptions([])
       setLoading(false)
       setError(false)
@@ -106,9 +112,7 @@ export default function CityAutocompleteMulti({
         e.preventDefault()
         if (activeIndex >= 0 && activeIndex < options.length) {
           const selectedOption = options[activeIndex]
-          if (selectedOption.nis_code) {
-            toggleCity(selectedOption.nis_code)
-          }
+          toggleCity(selectedOption)
         }
         break
       case 'Escape':
@@ -136,12 +140,19 @@ export default function CityAutocompleteMulti({
   }
 
   // Fonction pour ajouter/retirer une ville
-  const toggleCity = (nisCode: number) => {
+  const toggleCity = (option: CityOption) => {
+    if (!option.nis_code) return
+    
+    const nisCode = option.nis_code
+    const cityName = getCityName(option)
     const hasCity = value.map(Number).includes(nisCode)
+    
     if (hasCity) {
       onChange(value.filter(v => Number(v) !== nisCode))
+      setSelectedCities(prev => prev.filter(city => city.nis_code !== nisCode))
     } else {
       onChange([...value, nisCode])
+      setSelectedCities(prev => [...prev, { nis_code: nisCode, name: cityName }])
     }
     setInputValue('')
     setIsOpen(false)
@@ -150,9 +161,7 @@ export default function CityAutocompleteMulti({
 
   // Gestion du clic sur une option
   const handleOptionClick = (option: CityOption) => {
-    if (option.nis_code) {
-      toggleCity(option.nis_code)
-    }
+    toggleCity(option)
   }
 
   // Gestion du clic en dehors
@@ -221,13 +230,7 @@ export default function CityAutocompleteMulti({
             </li>
           )}
           
-          {!loading && !error && options.length === 0 && inputValue.trim().length > 0 && inputValue.trim().length < 2 && (
-            <li className="px-3 py-2 text-sm text-gray-500">
-              Tapez au moins 2 caractères
-            </li>
-          )}
-          
-          {!loading && !error && options.length === 0 && inputValue.trim().length >= 2 && (
+          {!loading && !error && options.length === 0 && inputValue.trim() !== '' && (
             <li className="px-3 py-2 text-sm text-gray-500">
               Aucune ville trouvée
             </li>
@@ -264,16 +267,19 @@ export default function CityAutocompleteMulti({
       )}
 
       {/* Affichage des villes sélectionnées */}
-      {value.length > 0 && (
+      {selectedCities.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {value.map(v => (
-            <span key={String(v)} className="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs">
-              {String(v)}
+          {selectedCities.map(city => (
+            <span key={city.nis_code} className="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs">
+              {city.name}
               <button
                 type="button"
                 className="text-neutral-500 hover:text-red-600"
-                onClick={() => onChange(value.filter(x => String(x) !== String(v)))}
-                aria-label={`Supprimer ${String(v)}`}
+                onClick={() => {
+                  onChange(value.filter(x => Number(x) !== city.nis_code))
+                  setSelectedCities(prev => prev.filter(c => c.nis_code !== city.nis_code))
+                }}
+                aria-label={`Supprimer ${city.name}`}
               >
                 ×
               </button>
