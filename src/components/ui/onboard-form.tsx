@@ -81,14 +81,14 @@ export default function OnboardForm() {
 
   // --- nouvelles localisations (multi) ---
   const [locations, setLocations] = useState<LocationDraft[]>([
-    { mode: 'cabinet', address: '', postal_code: '', city: '', country: 'BE' },
+    { mode: 'cabinet', address: '', street: '', house_number: '', postal_code: '', city: '', country: 'BE' },
   ])
 
   const addLocation = (mode: Mode) => {
     setLocations(v => [
       ...v,
       mode === 'cabinet'
-        ? { mode, address: '', postal_code: '', city: '', country: 'BE' }
+        ? { mode, address: '', street: '', house_number: '', postal_code: '', city: '', country: 'BE' }
         : { mode, country: 'BE', cities: [] },
     ])
   }
@@ -99,6 +99,11 @@ export default function OnboardForm() {
   function updateLoc(idx: number, patch: Partial<DomicileDraft>): void
   function updateLoc(idx: number, patch: Partial<LocationDraft>): void {
     setLocations(v => v.map((l, i) => (i === idx ? ({ ...l, ...patch } as LocationDraft) : l)))
+  }
+
+  // Helper pour construire l'adresse complète
+  const buildAddress = (street: string, houseNumber: string) => {
+    return [street, houseNumber].filter(Boolean).join(' ')
   }
 
   const toggle = (key: 'languages' | 'specialties', value: string) =>
@@ -116,12 +121,12 @@ export default function OnboardForm() {
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
     for (const loc of locations) {
       if (loc.mode === 'cabinet') {
-        if (!loc.address || !loc.city || !loc.postal_code) {
-          return setErr('Chaque cabinet doit avoir adresse, ville et code postal.')
+        if (!loc.street || !loc.house_number || !loc.city || !loc.postal_code) {
+          return setErr('Chaque cabinet doit avoir rue, numéro, ville et code postal.')
         }
       } else {
         if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
-          return setErr('Chaque zone à domicile doit contenir au moins une ville.')
+          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
         }
       }
     }
@@ -265,25 +270,65 @@ export default function OnboardForm() {
             </div>
 
             {loc.mode === 'cabinet' ? (
-              <div className="space-y-2">
-                <label className="mb-1 block text-sm">Adresse</label>
-                <AddressAutocomplete
-                  value={[loc.address, [loc.postal_code, loc.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
-                  onChange={() => { /* noop, selection handled via onSelect */ }}
-                  onSelect={(a: AddressSuggestion) =>
-                    updateLoc(idx, ({
-                      address: [a.street ?? '', a.house_number ?? ''].filter(Boolean).join(' '),
-                      postal_code: a.postal_code || '',
-                      city: a.city || '',
-                      country: 'BE',
-                      lon: a.lon, lat: a.lat,
-                      street: a.street, house_number: a.house_number,
-                      place_name: a.place_name, mapbox_id: a.mapbox_id, bbox: a.bbox,
-                    } as Partial<CabinetDraft>))
-                  }
-                />
-                <div className="text-xs text-neutral-500">
-                  {loc.lat && loc.lon ? 'Géolocalisé ✓' : 'Sélectionnez une suggestion pour valider l’adresse.'}
+              <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm">Rue</label>
+                    <input
+                      type="text"
+                      className="input w-full"
+                      value={loc.street || ''}
+                      onChange={(e) => {
+                        const street = e.target.value
+                        updateLoc(idx, {
+                          street,
+                          address: buildAddress(street, loc.house_number || '')
+                        } as Partial<CabinetDraft>)
+                      }}
+                      placeholder="Rue de la Paix"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm">Numéro</label>
+                    <input
+                      type="text"
+                      className="input w-full"
+                      value={loc.house_number || ''}
+                      onChange={(e) => {
+                        const houseNumber = e.target.value
+                        updateLoc(idx, {
+                          house_number: houseNumber,
+                          address: buildAddress(loc.street || '', houseNumber)
+                        } as Partial<CabinetDraft>)
+                      }}
+                      placeholder="123"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm">Code postal</label>
+                    <input
+                      type="text"
+                      className="input w-full"
+                      value={loc.postal_code || ''}
+                      onChange={(e) => updateLoc(idx, { postal_code: e.target.value } as Partial<CabinetDraft>)}
+                      placeholder="1000"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm">Ville</label>
+                    <input
+                      type="text"
+                      className="input w-full"
+                      value={loc.city || ''}
+                      onChange={(e) => updateLoc(idx, { city: e.target.value } as Partial<CabinetDraft>)}
+                      placeholder="Bruxelles"
+                    />
+                  </div>
+                </div>
+                <div className="text-xs text-neutral-500 bg-neutral-50 p-2 rounded">
+                  <strong>Adresse complète :</strong> {loc.address || 'Rue + Numéro'} {loc.postal_code && loc.city ? `, ${loc.postal_code} ${loc.city}` : ''}
                 </div>
               </div>
             ) : (
