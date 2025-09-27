@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 import AddressAutocomplete, { AddressSuggestion } from '@/components/ui/AddressAutocomplete'
 import CityPicker from '@/components/ui/CityPicker'
+import CityAutocomplete from '@/components/ui/CityAutocomplete'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -318,12 +319,11 @@ export default function OnboardForm() {
                   </div>
                   <div>
                     <label className="mb-1 block text-sm">Ville</label>
-                    <input
-                      type="text"
-                      className="input w-full"
+                    <CityAutocomplete
                       value={loc.city || ''}
-                      onChange={(e) => updateLoc(idx, { city: e.target.value } as Partial<CabinetDraft>)}
+                      onChange={(city) => updateLoc(idx, { city } as Partial<CabinetDraft>)}
                       placeholder="Bruxelles"
+                      locale="fr"
                     />
                   </div>
                 </div>
