@@ -11,8 +11,8 @@ const CabinetZ = z.object({
   postal_code: z.string().min(1),
   city: z.string().min(1),
   country: z.literal('BE'),
-  lon: z.number().optional(),
-  lat: z.number().optional(),
+  lon: z.number(),   // <- obligatoire
+  lat: z.number(),   // <- obligatoire
   street: z.string().optional().nullable(),
   house_number: z.string().optional().nullable(),
   place_name: z.string().optional().nullable(),
@@ -95,6 +95,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: 'Invalid payload' }, { status: 400 })
   }
   const p = parsed.data
+
+  // Debug: vérifier le payload locations
+  console.log('📦 locations payload:', JSON.stringify(p.locations, null, 2))
 
   try {
     // 0) Auth obligatoire (RLS)
