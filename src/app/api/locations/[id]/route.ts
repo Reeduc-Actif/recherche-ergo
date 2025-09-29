@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-import { LocationInputZ, LocationResponse } from '@/lib/location-schemas'
+import { LocationInputZ } from '@/lib/location-schemas'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,11 +15,12 @@ function toWKT(lon: number, lat: number): string {
   return `SRID=4326;POINT(${lon} ${lat})`
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const sb = await supabaseServer()
 
   try {
-    const locationId = parseInt(params.id)
+    const resolvedParams = await params
+    const locationId = parseInt(resolvedParams.id)
     if (isNaN(locationId)) {
       return NextResponse.json({ ok: false, error: 'Invalid location ID' }, { status: 400 })
     }

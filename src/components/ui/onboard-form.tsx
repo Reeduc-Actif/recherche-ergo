@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import CityAutocomplete from '@/components/ui/CityAutocomplete'
 import CityAutocompleteMulti from '@/components/ui/CityAutocompleteMulti'
 import AddressAutocomplete from '@/components/ui/AddressAutocomplete'
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
 import { supabaseServer } from '@/lib/supabase'
-import { LocationInputZ, LocationResponse } from '@/lib/location-schemas'
+import { LocationInputZ } from '@/lib/location-schemas'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
