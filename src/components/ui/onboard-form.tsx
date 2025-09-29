@@ -116,16 +116,24 @@ export default function OnboardForm() {
 
     // validation localisations
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
-    for (const loc of locations) {
+    
+    // Filtrer les locations valides
+    const validLocations = locations.filter(loc => {
       if (loc.mode === 'cabinet') {
-        if (!loc.address || !loc.lon || !loc.lat || !loc.city || !loc.postal_code) {
-          return setErr('Chaque cabinet doit avoir une adresse complète avec coordonnées géographiques.')
-        }
+        return loc.address && loc.lon && loc.lat && loc.city && loc.postal_code
       } else {
-        if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
-          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
-        }
+        return 'cities' in loc && loc.cities && loc.cities.length > 0
       }
+    })
+    
+    if (validLocations.length === 0) {
+      return setErr('Aucune localisation valide. Vérifiez que vos cabinets ont une adresse complète avec coordonnées.')
+    }
+    
+    // Vérifier qu'il y a au moins un cabinet valide
+    const hasValidCabinet = validLocations.some(loc => loc.mode === 'cabinet')
+    if (!hasValidCabinet) {
+      return setErr('Vous devez avoir au moins un cabinet avec une adresse complète.')
     }
 
     const min = form.price_min ? Number(form.price_min) : undefined
@@ -141,7 +149,7 @@ export default function OnboardForm() {
           ...form,
           price_min: min,
           price_max: max,
-          locations, // ← cabinet[] & domicile[]
+          locations: validLocations, // ← seulement les locations valides
         }),
       })
       const json: { ok?: boolean; error?: string; slug?: string } = await res.json()
@@ -290,11 +298,19 @@ export default function OnboardForm() {
                     placeholder="Rechercher une adresse..."
                   />
                 </div>
-                <div className="text-xs text-neutral-500 bg-neutral-50 p-2 rounded">
+                <div className={`text-xs p-2 rounded ${
+                  loc.address && loc.lon && loc.lat 
+                    ? 'text-green-700 bg-green-50' 
+                    : 'text-amber-700 bg-amber-50'
+                }`}>
                   <strong>Adresse sélectionnée :</strong> {loc.address || 'Aucune adresse sélectionnée'}
-                  {loc.lon && loc.lat && (
+                  {loc.lon && loc.lat ? (
                     <span className="ml-2 text-green-600">
                       ✓ Coordonnées: {loc.lon.toFixed(6)}, {loc.lat.toFixed(6)}
+                    </span>
+                  ) : (
+                    <span className="ml-2 text-amber-600">
+                      ⚠️ Sélectionnez une adresse complète pour continuer
                     </span>
                   )}
                 </div>

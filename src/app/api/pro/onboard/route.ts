@@ -92,6 +92,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}))
   const parsed = Payload.safeParse(body)
   if (!parsed.success) {
+    console.error('❌ Zod validation failed:', parsed.error)
+    console.error('❌ Invalid payload:', JSON.stringify(body, null, 2))
     return NextResponse.json({ ok: false, error: 'Invalid payload' }, { status: 400 })
   }
   const p = parsed.data
