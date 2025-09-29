@@ -1,143 +1,240 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useId } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
-export type AddressSuggestion = {
-  label: string
+interface MapboxFeature {
+  id: string
+  place_name: string
+  properties: {
+    address?: string
+    category?: string
+  }
+  geometry: {
+    coordinates: [number, number] // [lon, lat]
+  }
+  context?: Array<{
+    id: string
+    text: string
+    short_code?: string
+  }>
+}
+
+interface AddressData {
   address: string
-  city: string
   postal_code: string
+  city: string
   country: 'BE'
   lon: number
   lat: number
-  // optional metadata filled from Mapbox feature
+  place_name: string
+  mapbox_id: string
   street?: string
   house_number?: string
-  place_name?: string
-  mapbox_id?: string
   bbox?: number[]
 }
 
-export type AddressAutocompleteProps = {
+interface AddressAutocompleteProps {
   value: string
-  onChange: (v: string) => void
-  onSelect: (s: AddressSuggestion) => void
+  onChange: (addressData: AddressData) => void
   placeholder?: string
-}
-
-type MapboxFeature = {
-  id?: string
-  place_name: string
-  center: [number, number]
-  context?: Array<{ id: string; text: string }>
-  properties?: Record<string, unknown>
-  text?: string
-  bbox?: number[]
+  className?: string
 }
 
 export default function AddressAutocomplete({
   value,
   onChange,
-  onSelect,
-  placeholder = 'Search an address…',
+  placeholder = "Rechercher une adresse...",
+  className = ""
 }: AddressAutocompleteProps) {
-  const [open, setOpen] = useState(false)
-  const [opts, setOpts] = useState<AddressSuggestion[]>([])
-  const ref = useRef<HTMLDivElement | null>(null)
-  const timer = useRef<number | null>(null)
-  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-  const listId = useId()
+  const [query, setQuery] = useState(value)
+  const [suggestions, setSuggestions] = useState<MapboxFeature[]>([])
+  const [isOpen, setIsOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
+  // Debounce search
   useEffect(() => {
-    const onDocClick = (e: MouseEvent) => {
-      if (!ref.current) return
-      if (!ref.current.contains(e.target as Node)) setOpen(false)
+    if (!query.trim() || query.length < 3) {
+      setSuggestions([])
+      setIsOpen(false)
+      return
     }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+
+    const timeoutId = setTimeout(() => {
+      searchAddresses(query)
+    }, 300)
+
+    return () => clearTimeout(timeoutId)
+  }, [query])
+
+  const searchAddresses = async (searchQuery: string) => {
+    setLoading(true)
+    try {
+      const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+      if (!token) {
+        console.error('NEXT_PUBLIC_MAPBOX_TOKEN not found')
+        return
+      }
+
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?` +
+        `access_token=${token}&` +
+        `country=BE&` +
+        `types=address&` +
+        `limit=5&` +
+        `language=fr`
+      )
+
+      if (!response.ok) {
+        throw new Error('Mapbox API error')
+      }
+
+      const data = await response.json()
+      setSuggestions(data.features || [])
+      setIsOpen(true)
+    } catch (error) {
+      console.error('Error searching addresses:', error)
+      setSuggestions([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const extractAddressData = (feature: MapboxFeature): AddressData => {
+    const [lon, lat] = feature.geometry.coordinates
+    
+    // Extract postal code and city from context
+    let postal_code = ''
+    let city = ''
+    let street = ''
+    let house_number = ''
+
+    if (feature.context) {
+      for (const ctx of feature.context) {
+        if (ctx.id.startsWith('postcode')) {
+          postal_code = ctx.text
+        } else if (ctx.id.startsWith('place')) {
+          city = ctx.text
+        }
+      }
+    }
+
+    // Try to extract street and house number from place_name
+    const placeName = feature.place_name
+    const addressParts = placeName.split(',')[0] // Get the first part (street address)
+    
+    // Simple regex to extract house number from the beginning
+    const houseNumberMatch = addressParts.match(/^(\d+[a-zA-Z]?)\s*(.*)/)
+    if (houseNumberMatch) {
+      house_number = houseNumberMatch[1]
+      street = houseNumberMatch[2].trim()
+    } else {
+      street = addressParts.trim()
+    }
+
+    return {
+      address: placeName,
+      postal_code,
+      city,
+      country: 'BE' as const,
+      lon,
+      lat,
+      place_name: placeName,
+      mapbox_id: feature.id,
+      street: street || undefined,
+      house_number: house_number || undefined,
+    }
+  }
+
+  const handleSelect = (feature: MapboxFeature) => {
+    const addressData = extractAddressData(feature)
+    setQuery(addressData.address)
+    setIsOpen(false)
+    onChange(addressData)
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setQuery(e.target.value)
+    if (!isOpen && e.target.value.length >= 3) {
+      setIsOpen(true)
+    }
+  }
+
+  const handleInputFocus = () => {
+    if (suggestions.length > 0) {
+      setIsOpen(true)
+    }
+  }
+
+  const handleInputBlur = () => {
+    // Delay to allow click on suggestions
+    setTimeout(() => {
+      setIsOpen(false)
+    }, 200)
+  }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  useEffect(() => {
-    if (!token) return
-    if (timer.current) window.clearTimeout(timer.current)
-    const term = value.trim()
-    timer.current = window.setTimeout(async () => {
-      if (term.length < 3) { setOpts([]); return }
-      const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(term)}.json`)
-      url.searchParams.set('country', 'BE')
-      url.searchParams.set('language', 'fr')
-      url.searchParams.set('limit', '8')
-      url.searchParams.set('autocomplete', 'true')
-      url.searchParams.set('types', 'address,place,locality,neighborhood,postcode,poi')
-      url.searchParams.set('access_token', token)
-
-      const res = await fetch(url.toString())
-  const json = await res.json() as { features?: MapboxFeature[] }
-  const features: MapboxFeature[] = json.features ?? []
-
-  const out: AddressSuggestion[] = features.map((f: MapboxFeature) => {
-        const [lon, lat] = f.center
-        const ctx = f.context ?? []
-        const city = ctx.find(c => c.id.startsWith('place'))?.text
-          ?? ctx.find(c => c.id.startsWith('locality'))?.text
-          ?? ''
-        const postal = ctx.find(c => c.id.startsWith('postcode'))?.text ?? ''
-        const label = f.place_name
-        const address = label.split(',')[0]?.trim() || label
-        // Mapbox sometimes exposes house number in properties.address and street in text
-        const props = (f.properties ?? {}) as Record<string, unknown>
-        const house_number = typeof props['address'] === 'string' ? (props['address'] as string) : undefined
-        const street = f.text ?? (typeof props['street'] === 'string' ? (props['street'] as string) : undefined)
-
-        return {
-          label,
-          address,
-          city,
-          postal_code: postal,
-          country: 'BE',
-          lon,
-          lat,
-          street,
-          house_number,
-          place_name: f.place_name,
-          mapbox_id: f.id,
-          bbox: f.bbox,
-        }
-      })
-
-      setOpts(out)
-      setOpen(true)
-    }, 300)
-    return () => { if (timer.current) window.clearTimeout(timer.current) }
-  }, [value, token])
-
   return (
-    <div className="relative" ref={ref}>
+    <div className={`relative ${className}`}>
       <input
-        className="input w-full"
-        value={value}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-        onFocus={() => { if (opts.length > 0) setOpen(true) }}
+        ref={inputRef}
+        type="text"
+        value={query}
+        onChange={handleInputChange}
+        onFocus={handleInputFocus}
+        onBlur={handleInputBlur}
         placeholder={placeholder}
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={listId}
+        className="input w-full"
+        autoComplete="off"
       />
-      {open && opts.length > 0 && (
-        <div id={listId} className="absolute z-20 mt-1 w-full rounded-lg border bg-white shadow">
-          {opts.map((s: AddressSuggestion, i: number) => (
-            <button
-              key={`${s.lon},${s.lat},${i}`}
-              type="button"
-              onClick={() => { onSelect(s); setOpen(false) }}
-              className="block w-full px-3 py-2 text-left hover:bg-neutral-50"
-            >
-              <div className="text-sm">{s.label}</div>
-              <div className="text-xs text-neutral-500">
-                {s.postal_code ? `${s.postal_code} ` : ''}{s.city}
-              </div>
-            </button>
-          ))}
+      
+      {isOpen && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-lg"
+        >
+          {loading ? (
+            <div className="p-3 text-center text-sm text-gray-500">
+              Recherche en cours...
+            </div>
+          ) : suggestions.length > 0 ? (
+            <div className="max-h-60 overflow-y-auto">
+              {suggestions.map((feature) => (
+                <button
+                  key={feature.id}
+                  type="button"
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                  onClick={() => handleSelect(feature)}
+                >
+                  <div className="font-medium">{feature.place_name}</div>
+                  {feature.properties.category && (
+                    <div className="text-xs text-gray-500">{feature.properties.category}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : query.length >= 3 ? (
+            <div className="p-3 text-center text-sm text-gray-500">
+              Aucune adresse trouvée
+            </div>
+          ) : null}
         </div>
       )}
     </div>
