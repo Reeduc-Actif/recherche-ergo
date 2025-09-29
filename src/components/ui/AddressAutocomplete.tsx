@@ -73,9 +73,13 @@ export default function AddressAutocomplete({
     try {
       const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
       if (!token) {
-        console.error('NEXT_PUBLIC_MAPBOX_TOKEN not found')
+        console.error('❌ NEXT_PUBLIC_MAPBOX_TOKEN not found - ajoutez votre token Mapbox dans .env.local')
+        setSuggestions([])
+        setIsOpen(false)
         return
       }
+      
+      console.log('🔍 Searching for:', searchQuery)
 
       const response = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?` +
@@ -91,6 +95,7 @@ export default function AddressAutocomplete({
       }
 
       const data = await response.json()
+      console.log('📍 Mapbox API response:', data.features?.length || 0, 'results')
       setSuggestions(data.features || [])
       setIsOpen(true)
     } catch (error) {

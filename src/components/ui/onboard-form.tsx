@@ -122,10 +122,14 @@ export default function OnboardForm() {
       const loc = locations[i]
       if (loc.mode === 'cabinet') {
         if (!loc.address || !loc.lon || !loc.lat || !loc.city || !loc.postal_code) {
-          return setErr(`Le cabinet ${i + 1} n'a pas d'adresse complète. Utilisez l'autocomplétion pour sélectionner une adresse avec coordonnées.`)
+          return setErr(`❌ Le cabinet ${i + 1} n'a pas d'adresse complète. Vous devez utiliser l'autocomplétion : tapez une adresse et sélectionnez une suggestion de la liste.`)
         }
         if (!Number.isFinite(loc.lon) || !Number.isFinite(loc.lat)) {
-          return setErr(`Le cabinet ${i + 1} a des coordonnées invalides. Sélectionnez une adresse via l'autocomplétion.`)
+          return setErr(`❌ Le cabinet ${i + 1} a des coordonnées invalides. Utilisez l'autocomplétion pour sélectionner une adresse.`)
+        }
+        // Vérifier que l'adresse a été sélectionnée via l'autocomplétion (pas tapée manuellement)
+        if (!loc.mapbox_id || !loc.place_name) {
+          return setErr(`❌ Le cabinet ${i + 1} n'a pas été sélectionné via l'autocomplétion. Tapez une adresse et cliquez sur une suggestion.`)
         }
       } else {
         if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
@@ -295,7 +299,9 @@ export default function OnboardForm() {
             {loc.mode === 'cabinet' ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm">Adresse du cabinet</label>
+                  <label className="mb-1 block text-sm">
+                    Adresse du cabinet <span className="text-red-500">*</span>
+                  </label>
                   <AddressAutocomplete
                     value={loc.address || ''}
                     onChange={(addressData) => {
@@ -314,8 +320,11 @@ export default function OnboardForm() {
                         bbox: addressData.bbox,
                       } as Partial<CabinetDraft>)
                     }}
-                    placeholder="Rechercher une adresse..."
+                    placeholder="Tapez une adresse et sélectionnez une suggestion..."
                   />
+                  <div className="mt-1 text-xs text-gray-600">
+                    💡 Tapez au moins 3 caractères, puis cliquez sur une suggestion de la liste
+                  </div>
                 </div>
                 <div className={`text-xs p-2 rounded ${
                   loc.address && loc.lon && loc.lat 
