@@ -107,23 +107,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
     }
 
-    // 1) Upsert therapist (via full_name). Idéalement: lier à l'utilisateur connecté.
+    // 1) Upsert therapist lié au compte
     const { data: th } = await sb
       .from('therapists')
       .select('id, slug')
-      .ilike('full_name', p.full_name)
+      .eq('profile_id', user.id)
       .limit(1)
       .maybeSingle();
 
     let therapistId: string | undefined = th?.id;
 
-    // Si pas trouvé → INSERT avec slug obligatoire
+    // Si pas trouvé → INSERT
     if (!therapistId) {
       const base = slugify(p.full_name);
       const slug = await uniqueSlug(sb, base);
       const { data: created, error: insErr } = await sb
         .from('therapists')
         .insert({
+          profile_id: user.id, // 🔑 IMPORTANT
           slug,
           full_name: p.full_name,
           headline: p.headline ?? null,
@@ -138,10 +139,14 @@ export async function POST(req: Request) {
         })
         .select('id')
         .single();
-      if (insErr || !created?.id) throw new Error('Therapist upsert failed');
+
+      if (insErr || !created?.id) {
+        console.error('❌ Insert failed:', insErr);
+        throw new Error(`Therapist upsert failed: ${insErr?.message}`);
+      }
       therapistId = created.id;
     } else if (!th?.slug) {
-      // Si trouvé mais sans slug → set un slug maintenant
+      // Si slug manquant
       const base = slugify(p.full_name);
       const slug = await uniqueSlug(sb, base);
       await sb.from('therapists').update({ slug }).eq('id', therapistId);
