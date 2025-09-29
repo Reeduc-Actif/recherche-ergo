@@ -58,6 +58,30 @@ function toWKT(lon?: number, lat?: number): string | null {
   return null
 }
 
+function slugify(input: string) {
+  return input
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // accents
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')                      // non alphanum → -
+    .replace(/^-+|-+$/g, '')                          // trim -
+    .slice(0, 64);
+}
+
+async function uniqueSlug(sb: any, base: string) {
+  const root = base || 'ergo';
+  const { data } = await sb
+    .from('therapists')
+    .select('slug')
+    .ilike('slug', `${root}%`);
+  const taken = new Set((data ?? []).map((r: any) => r.slug));
+  if (!taken.has(root)) return root;
+  for (let i = 2; i < 9999; i++) {
+    const s = `${root}-${i}`;
+    if (!taken.has(s)) return s;
+  }
+  return `${root}-${Date.now()}`;
+}
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -83,35 +107,44 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
     }
 
-    // 1) Upsert therapist PAR profile_id (unique) → évite le SELECT bloqué par RLS
-    const upsertPayload = {
-      profile_id: user.id, // 🔑 essentiel pour passer la policy INSERT
-      full_name: p.full_name,
-      headline: p.headline ?? null,
-      bio: p.bio ?? null,
-      phone: p.phone ?? null,
-      website: p.website ?? null,
-      booking_url: p.booking_url ?? null,
-      price_min: p.price_min ?? null,
-      price_max: p.price_max ?? null,
-      price_unit: p.price_unit ?? null,
-      is_published: false,
-    } as const
-
-    const { data: thRow, error: upsertErr } = await sb
+    // 1) Upsert therapist (via full_name). Idéalement: lier à l'utilisateur connecté.
+    const { data: th } = await sb
       .from('therapists')
-      .upsert(upsertPayload, { onConflict: 'profile_id' })
-      .select('id') // nécessite policy SELECT (using profile_id = auth.uid())
-      .single()
+      .select('id, slug')
+      .ilike('full_name', p.full_name)
+      .limit(1)
+      .maybeSingle();
 
-    if (upsertErr) {
-      console.error('❌ Upsert therapists error:', upsertErr)
-      return NextResponse.json({ ok: false, error: `Therapist upsert failed: ${upsertErr.message}` }, { status: 500 })
-    }
+    let therapistId: string | undefined = th?.id;
 
-    const therapistId = thRow?.id
+    // Si pas trouvé → INSERT avec slug obligatoire
     if (!therapistId) {
-      return NextResponse.json({ ok: false, error: 'Therapist upsert failed: no id' }, { status: 500 })
+      const base = slugify(p.full_name);
+      const slug = await uniqueSlug(sb, base);
+      const { data: created, error: insErr } = await sb
+        .from('therapists')
+        .insert({
+          slug,
+          full_name: p.full_name,
+          headline: p.headline ?? null,
+          bio: p.bio ?? null,
+          phone: p.phone ?? null,
+          website: p.website ?? null,
+          booking_url: p.booking_url ?? null,
+          price_min: p.price_min ?? null,
+          price_max: p.price_max ?? null,
+          price_unit: p.price_unit ?? null,
+          is_published: false,
+        })
+        .select('id')
+        .single();
+      if (insErr || !created?.id) throw new Error('Therapist upsert failed');
+      therapistId = created.id;
+    } else if (!th?.slug) {
+      // Si trouvé mais sans slug → set un slug maintenant
+      const base = slugify(p.full_name);
+      const slug = await uniqueSlug(sb, base);
+      await sb.from('therapists').update({ slug }).eq('id', therapistId);
     }
 
     // 2) Sync langues (delete puis insert) — policies JOIN sur therapists.profile_id = auth.uid()
@@ -222,7 +255,17 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true })
+    // Récupérer le slug final pour la réponse
+    const { data: finalTherapist } = await sb
+      .from('therapists')
+      .select('slug')
+      .eq('id', therapistId)
+      .single();
+
+    return NextResponse.json({ 
+      ok: true, 
+      slug: finalTherapist?.slug 
+    })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Server error'
     console.error('❌ [onboard] ERROR:', msg)
