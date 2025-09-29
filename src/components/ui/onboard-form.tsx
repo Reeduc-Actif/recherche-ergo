@@ -142,6 +142,7 @@ export default function OnboardForm() {
 
     setLoading(true)
     try {
+      console.log('📤 Sending locations:', validLocations)
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -281,6 +282,7 @@ export default function OnboardForm() {
                   <AddressAutocomplete
                     value={loc.address || ''}
                     onChange={(addressData) => {
+                      console.log('🏠 AddressAutocomplete onChange:', addressData)
                       updateLoc(idx, {
                         address: addressData.address,
                         postal_code: addressData.postal_code,

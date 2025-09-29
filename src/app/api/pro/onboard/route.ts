@@ -11,8 +11,8 @@ const CabinetZ = z.object({
   postal_code: z.string().min(1),
   city: z.string().min(1),
   country: z.literal('BE'),
-  lon: z.number(),   // <- obligatoire
-  lat: z.number(),   // <- obligatoire
+  lon: z.coerce.number(),   // <- obligatoire + convertit "4.36" en 4.36
+  lat: z.coerce.number(),   // <- idem
   street: z.string().optional().nullable(),
   house_number: z.string().optional().nullable(),
   place_name: z.string().optional().nullable(),
@@ -197,6 +197,16 @@ export async function POST(req: Request) {
     }
 
     const cabinets = (p.locations.filter((l: Location) => l.mode === 'cabinet') as Cabinet[])
+    
+    // garde-fou
+    const bad = cabinets.find(c => !Number.isFinite(c.lon) || !Number.isFinite(c.lat))
+    if (bad) {
+      return NextResponse.json(
+        { ok: false, error: "Adresse cabinet incomplète : lon/lat manquants. Sélectionne une adresse dans l'autocomplétion." },
+        { status: 400 }
+      )
+    }
+    
     if (cabinets.length) {
       const locIns = await sb
         .from('therapist_locations')
