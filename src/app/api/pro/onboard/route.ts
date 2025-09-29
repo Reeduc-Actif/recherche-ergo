@@ -67,13 +67,13 @@ function slugify(input: string) {
     .slice(0, 64);
 }
 
-async function uniqueSlug(sb: any, base: string) {
+async function uniqueSlug(sb: Awaited<ReturnType<typeof supabaseServer>>, base: string) {
   const root = base || 'ergo';
   const { data } = await sb
     .from('therapists')
     .select('slug')
     .ilike('slug', `${root}%`);
-  const taken = new Set((data ?? []).map((r: any) => r.slug));
+  const taken = new Set((data ?? []).map((r: { slug: string }) => r.slug));
   if (!taken.has(root)) return root;
   for (let i = 2; i < 9999; i++) {
     const s = `${root}-${i}`;
