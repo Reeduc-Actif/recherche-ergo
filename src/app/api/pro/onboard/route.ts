@@ -11,8 +11,8 @@ const CabinetZ = z.object({
   postal_code: z.string().min(1),
   city: z.string().min(1),
   country: z.literal('BE'),
-  lon: z.coerce.number(),   // <- obligatoire + convertit "4.36" en 4.36
-  lat: z.coerce.number(),   // <- idem
+  lon: z.number().finite(),   // <- obligatoire, doit être un nombre fini
+  lat: z.number().finite(),   // <- idem
   street: z.string().optional().nullable(),
   house_number: z.string().optional().nullable(),
   place_name: z.string().optional().nullable(),

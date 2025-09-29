@@ -117,17 +117,34 @@ export default function OnboardForm() {
     // validation localisations
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
     
+    // Vérifier chaque location individuellement
+    for (let i = 0; i < locations.length; i++) {
+      const loc = locations[i]
+      if (loc.mode === 'cabinet') {
+        if (!loc.address || !loc.lon || !loc.lat || !loc.city || !loc.postal_code) {
+          return setErr(`Le cabinet ${i + 1} n'a pas d'adresse complète. Utilisez l'autocomplétion pour sélectionner une adresse avec coordonnées.`)
+        }
+        if (!Number.isFinite(loc.lon) || !Number.isFinite(loc.lat)) {
+          return setErr(`Le cabinet ${i + 1} a des coordonnées invalides. Sélectionnez une adresse via l'autocomplétion.`)
+        }
+      } else {
+        if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
+          return setErr(`La zone à domicile ${i + 1} doit contenir au moins une commune.`)
+        }
+      }
+    }
+    
     // Filtrer les locations valides
     const validLocations = locations.filter(loc => {
       if (loc.mode === 'cabinet') {
-        return loc.address && loc.lon && loc.lat && loc.city && loc.postal_code
+        return loc.address && Number.isFinite(loc.lon) && Number.isFinite(loc.lat) && loc.city && loc.postal_code
       } else {
         return 'cities' in loc && loc.cities && loc.cities.length > 0
       }
     })
     
     if (validLocations.length === 0) {
-      return setErr('Aucune localisation valide. Vérifiez que vos cabinets ont une adresse complète avec coordonnées.')
+      return setErr('Aucune localisation valide.')
     }
     
     // Vérifier qu'il y a au moins un cabinet valide
@@ -303,7 +320,7 @@ export default function OnboardForm() {
                 <div className={`text-xs p-2 rounded ${
                   loc.address && loc.lon && loc.lat 
                     ? 'text-green-700 bg-green-50' 
-                    : 'text-amber-700 bg-amber-50'
+                    : 'text-red-700 bg-red-50'
                 }`}>
                   <strong>Adresse sélectionnée :</strong> {loc.address || 'Aucune adresse sélectionnée'}
                   {loc.lon && loc.lat ? (
@@ -311,8 +328,8 @@ export default function OnboardForm() {
                       ✓ Coordonnées: {loc.lon.toFixed(6)}, {loc.lat.toFixed(6)}
                     </span>
                   ) : (
-                    <span className="ml-2 text-amber-600">
-                      ⚠️ Sélectionnez une adresse complète pour continuer
+                    <span className="ml-2 text-red-600">
+                      ❌ OBLIGATOIRE : Tapez une adresse et sélectionnez une suggestion de la liste
                     </span>
                   )}
                 </div>
