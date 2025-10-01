@@ -156,7 +156,7 @@ export default function OnboardForm() {
 
       console.log('📤 Sending to n8n webhook:', payload)
       
-      const webhookUrl = process.env.N8N_WEBHOOK_VALIDATION_FORMULAIRE
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_VALIDATION_FORMULAIRE
       if (!webhookUrl) {
         throw new Error('URL du webhook n8n non configurée')
       }

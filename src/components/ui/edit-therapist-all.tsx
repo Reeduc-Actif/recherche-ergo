@@ -259,7 +259,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
       console.log('📤 Sending to n8n webhook:', payload)
       
-      const webhookUrl = process.env.N8N_WEBHOOK_UPDATE_FORMULAIRE
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_UPDATE_FORMULAIRE
       if (!webhookUrl) {
         throw new Error('URL du webhook n8n non configurée')
       }
