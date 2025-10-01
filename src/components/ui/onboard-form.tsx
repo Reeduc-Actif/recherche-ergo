@@ -117,8 +117,8 @@ export default function OnboardForm() {
     if (!form.specialties.length) return setErr('Sélectionnez au moins une spécialité.')
     
     // Validation INAMI
-    if (form.inami_number && !/^\d{11}$/.test(form.inami_number)) {
-      return setErr('Le numéro INAMI doit contenir exactement 11 chiffres.')
+    if (form.inami_number && !/^\d{8,}$/.test(form.inami_number)) {
+      return setErr('Le numéro INAMI doit contenir au moins 8 chiffres.')
     }
 
     // validation localisations
@@ -250,20 +250,20 @@ export default function OnboardForm() {
           <input type="email" className="input" value={form.email} onChange={e => setForm(v => ({ ...v, email: e.target.value }))} required />
         </div>
         <div>
-          <label className="mb-1 block text-sm">Numéro INAMI (11 chiffres)</label>
+          <label className="mb-1 block text-sm">Numéro INAMI (8+ chiffres)</label>
           <input 
             className="input" 
-            placeholder="12345678901"
-            maxLength={11}
+            placeholder="12345678"
+            maxLength={15}
             value={form.inami_number} 
             onChange={e => {
               const value = e.target.value.replace(/\D/g, '') // Only digits
               setForm(v => ({ ...v, inami_number: value }))
             }}
           />
-          {form.inami_number && !/^\d{11}$/.test(form.inami_number) && (
+          {form.inami_number && !/^\d{8,}$/.test(form.inami_number) && (
             <div className="mt-1 text-xs text-red-600">
-              Le numéro INAMI doit contenir exactement 11 chiffres
+              Le numéro INAMI doit contenir au moins 8 chiffres
             </div>
           )}
         </div>

@@ -215,8 +215,8 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
     
     // Validation INAMI
-    if (inamiNumber && !/^\d{11}$/.test(inamiNumber)) {
-      return setErr('Le numéro INAMI doit contenir exactement 11 chiffres.')
+    if (inamiNumber && !/^\d{8,}$/.test(inamiNumber)) {
+      return setErr('Le numéro INAMI doit contenir au moins 8 chiffres.')
     }
 
     for (const loc of locations) {
@@ -340,20 +340,20 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
             <input type="email" className="input w-full" value={email} onChange={e => setEmail(e.target.value)} required />
           </div>
           <div>
-            <label className="mb-1 block text-sm">Numéro INAMI (11 chiffres)</label>
+            <label className="mb-1 block text-sm">Numéro INAMI (8+ chiffres)</label>
             <input 
               className="input w-full" 
-              placeholder="12345678901"
-              maxLength={11}
+              placeholder="12345678"
+              maxLength={15}
               value={inamiNumber} 
               onChange={e => {
                 const value = e.target.value.replace(/\D/g, '') // Only digits
                 setInamiNumber(value)
               }}
             />
-            {inamiNumber && !/^\d{11}$/.test(inamiNumber) && (
+            {inamiNumber && !/^\d{8,}$/.test(inamiNumber) && (
               <div className="mt-1 text-xs text-red-600">
-                Le numéro INAMI doit contenir exactement 11 chiffres
+                Le numéro INAMI doit contenir au moins 8 chiffres
               </div>
             )}
           </div>
