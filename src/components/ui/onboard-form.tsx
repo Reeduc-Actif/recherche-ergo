@@ -66,11 +66,12 @@ export default function OnboardForm() {
   const [err, setErr] = useState<string | null>(null)
 
   const [form, setForm] = useState({
-    full_name: '',
-    headline: '',
+    first_name: '',
+    last_name: '',
+    inami_number: '',
+    email: '',
     bio: '',
     phone: '',
-    website: '',
     booking_url: '',
     languages: [] as string[],
     specialties: [] as string[],
@@ -109,9 +110,16 @@ export default function OnboardForm() {
     e.preventDefault()
     setOk(null); setErr(null)
 
-    if (!form.full_name.trim()) return setErr('Nom complet requis.')
+    if (!form.first_name.trim()) return setErr('Prénom requis.')
+    if (!form.last_name.trim()) return setErr('Nom requis.')
+    if (!form.email.trim()) return setErr('Email professionnel requis.')
     if (!form.languages.length) return setErr('Sélectionnez au moins une langue.')
     if (!form.specialties.length) return setErr('Sélectionnez au moins une spécialité.')
+    
+    // Validation INAMI
+    if (form.inami_number && !/^\d{11}$/.test(form.inami_number)) {
+      return setErr('Le numéro INAMI doit contenir exactement 11 chiffres.')
+    }
 
     // validation localisations
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
@@ -162,15 +170,53 @@ export default function OnboardForm() {
 
     setLoading(true)
     try {
-      console.log('📤 Sending locations:', validLocations)
+      // Transform locations to match new API contract
+      const transformedLocations = validLocations.map(loc => {
+        if (loc.mode === 'cabinet') {
+          return {
+            mode: 'cabinet',
+            address: loc.address,
+            postal_code: loc.postal_code,
+            city: loc.city,
+            country: 'BE' as const,
+            coords: {
+              type: 'Point' as const,
+              coordinates: [loc.lon!, loc.lat!]
+            },
+            // Keep meta data for reference
+            ...(loc.place_name && { place_name: loc.place_name }),
+            ...(loc.mapbox_id && { mapbox_id: loc.mapbox_id }),
+            ...(loc.street && { street: loc.street }),
+            ...(loc.house_number && { house_number: loc.house_number }),
+            ...(loc.bbox && { bbox: loc.bbox }),
+          }
+        } else {
+          return {
+            mode: 'domicile',
+            country: 'BE' as const,
+            cities: loc.cities.map(String)
+          }
+        }
+      })
+
+      console.log('📤 Sending payload:', { ...form, locations: transformedLocations })
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          first_name: form.first_name.trim(),
+          last_name: form.last_name.trim(),
+          inami_number: form.inami_number.trim() || undefined,
+          email: form.email.trim(),
+          bio: form.bio.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          booking_url: form.booking_url.trim() || undefined,
           price_min: min,
           price_max: max,
-          locations: validLocations, // ← seulement les locations valides
+          price_unit: form.price_unit,
+          languages: form.languages,
+          specialties: form.specialties,
+          locations: transformedLocations,
         }),
       })
       const json: { ok?: boolean; error?: string; slug?: string } = await res.json()
@@ -189,12 +235,37 @@ export default function OnboardForm() {
     <form onSubmit={onSubmit} className="space-y-6 rounded-2xl border p-4">
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm">Nom complet</label>
-          <input className="input" value={form.full_name} onChange={e => setForm(v => ({ ...v, full_name: e.target.value }))} />
+          <label className="mb-1 block text-sm">Prénom <span className="text-red-500">*</span></label>
+          <input className="input" value={form.first_name} onChange={e => setForm(v => ({ ...v, first_name: e.target.value }))} required />
         </div>
         <div>
-          <label className="mb-1 block text-sm">Titre / headline</label>
-          <input className="input" placeholder="Pédiatrie, troubles DYS…" value={form.headline} onChange={e => setForm(v => ({ ...v, headline: e.target.value }))} />
+          <label className="mb-1 block text-sm">Nom <span className="text-red-500">*</span></label>
+          <input className="input" value={form.last_name} onChange={e => setForm(v => ({ ...v, last_name: e.target.value }))} required />
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-sm">Email professionnel <span className="text-red-500">*</span></label>
+          <input type="email" className="input" value={form.email} onChange={e => setForm(v => ({ ...v, email: e.target.value }))} required />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm">Numéro INAMI (11 chiffres)</label>
+          <input 
+            className="input" 
+            placeholder="12345678901"
+            maxLength={11}
+            value={form.inami_number} 
+            onChange={e => {
+              const value = e.target.value.replace(/\D/g, '') // Only digits
+              setForm(v => ({ ...v, inami_number: value }))
+            }}
+          />
+          {form.inami_number && !/^\d{11}$/.test(form.inami_number) && (
+            <div className="mt-1 text-xs text-red-600">
+              Le numéro INAMI doit contenir exactement 11 chiffres
+            </div>
+          )}
         </div>
       </div>
 
@@ -203,14 +274,10 @@ export default function OnboardForm() {
         <textarea className="input h-28 w-full" value={form.bio} onChange={e => setForm(v => ({ ...v, bio: e.target.value }))} />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm">Téléphone</label>
-          <input className="input" value={form.phone} onChange={e => setForm(v => ({ ...v, phone: e.target.value }))} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm">Site web</label>
-          <input className="input" placeholder="https://…" value={form.website} onChange={e => setForm(v => ({ ...v, website: e.target.value }))} />
+          <input className="input" placeholder="+32..." value={form.phone} onChange={e => setForm(v => ({ ...v, phone: e.target.value }))} />
         </div>
         <div>
           <label className="mb-1 block text-sm">Lien de prise de RDV</label>

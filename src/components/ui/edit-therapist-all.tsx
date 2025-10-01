@@ -18,12 +18,13 @@ type Therapist = {
   id: string
   slug: string | null
   profile_id: string
-  full_name: string | null
-  headline: string | null
-  bio: string | null
+  first_name: string | null
+  last_name: string | null
+  full_name: string | null // Keep for backward compatibility
+  inami_number: string | null
   email: string | null
+  bio: string | null
   phone: string | null
-  website: string | null
   booking_url: string | null
   price_hint: string | null
   is_published: boolean | null
@@ -72,13 +73,13 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
   const sb = supabaseBrowser()
 
   // --- état profil ---
-  const [fullName, setFullName] = useState(therapist.full_name ?? '')
-  const [headline, setHeadline] = useState(therapist.headline ?? '')
+  const [firstName, setFirstName] = useState(therapist.first_name ?? '')
+  const [lastName, setLastName] = useState(therapist.last_name ?? '')
+  const [inamiNumber, setInamiNumber] = useState(therapist.inami_number ?? '')
+  const [email, setEmail] = useState(therapist.email ?? '')
   const [bio, setBio] = useState(therapist.bio ?? '')
   const [phone, setPhone] = useState(therapist.phone ?? '')
-  const [website, setWebsite] = useState(therapist.website ?? '')
   const [bookingUrl, setBookingUrl] = useState(therapist.booking_url ?? '')
-  const [isPublished, setIsPublished] = useState(Boolean(therapist.is_published))
   const [priceMin, setPriceMin] = useState<string>(therapist.price_min?.toString() ?? '')
   const [priceMax, setPriceMax] = useState<string>(therapist.price_max?.toString() ?? '')
   const [priceUnit, setPriceUnit] = useState<string>(therapist.price_unit ?? '')
@@ -206,10 +207,17 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
     e.preventDefault()
     setMsg(null); setErr(null)
 
-    if (!fullName || fullName.trim().length < 2) return setErr('Le nom complet est requis.')
+    if (!firstName.trim()) return setErr('Prénom requis.')
+    if (!lastName.trim()) return setErr('Nom requis.')
+    if (!email.trim()) return setErr('Email professionnel requis.')
     if (!languages.length) return setErr('Sélectionnez au moins une langue.')
     if (!specialties.length) return setErr('Sélectionnez au moins une spécialité.')
     if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
+    
+    // Validation INAMI
+    if (inamiNumber && !/^\d{11}$/.test(inamiNumber)) {
+      return setErr('Le numéro INAMI doit contenir exactement 11 chiffres.')
+    }
 
     for (const loc of locations) {
       if (loc.mode === 'cabinet') {
@@ -229,16 +237,18 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
     try {
       // 1) Update colonnes therapist
       const payloadTherapist = {
-        full_name: fullName.trim(),
-        headline: headline.trim() || null,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        inami_number: inamiNumber.trim() || null,
+        email: email.trim(),
         bio: bio.trim() || null,
         phone: phone.trim() || null,
-        website: website.trim() || null,
         booking_url: bookingUrl.trim() || null,
-        is_published: isPublished,
         price_min: minNum,
         price_max: maxNum,
         price_unit: priceUnit || null,
+        // Generate full_name for backward compatibility
+        full_name: `${firstName.trim()} ${lastName.trim()}`,
       }
       const { error: upErr } = await sb
         .from('therapists')
@@ -249,17 +259,49 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
       if (upErr) throw upErr
 
       // 2) Sync relations + localisations (idempotent côté route)
+      // Transform locations to match new API contract
+      const transformedLocations = locations.map(loc => {
+        if (loc.mode === 'cabinet') {
+          return {
+            mode: 'cabinet',
+            address: loc.address,
+            postal_code: loc.postal_code,
+            city: loc.city,
+            country: 'BE' as const,
+            coords: loc.lon && loc.lat ? {
+              type: 'Point' as const,
+              coordinates: [loc.lon, loc.lat]
+            } : undefined,
+            // Keep meta data for reference
+            ...(loc.place_name && { place_name: loc.place_name }),
+            ...(loc.mapbox_id && { mapbox_id: loc.mapbox_id }),
+            ...(loc.street && { street: loc.street }),
+            ...(loc.house_number && { house_number: loc.house_number }),
+            ...(loc.bbox && { bbox: loc.bbox }),
+          }
+        } else {
+          return {
+            mode: 'domicile',
+            country: 'BE' as const,
+            cities: loc.cities.map(String)
+          }
+        }
+      })
+
       const res = await fetch('/api/pro/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          full_name: fullName.trim(), // requis par la route
-          headline: headline.trim() || undefined,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          inami_number: inamiNumber.trim() || undefined,
+          email: email.trim(),
+          bio: bio.trim() || undefined,
           phone: phone.trim() || undefined,
           booking_url: bookingUrl.trim() || undefined,
           languages,
           specialties,
-          locations, // ← cabinet[] & domicile[] (communes) envoyés ensemble
+          locations: transformedLocations,
           price_min: minNum,
           price_max: maxNum,
           price_unit: priceUnit || undefined,
@@ -283,12 +325,37 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         {/* Identité */}
         <div className="grid gap-3 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm">Nom complet</label>
-            <input className="input w-full" value={fullName} onChange={e => setFullName(e.target.value)} required />
+            <label className="mb-1 block text-sm">Prénom <span className="text-red-500">*</span></label>
+            <input className="input w-full" value={firstName} onChange={e => setFirstName(e.target.value)} required />
           </div>
           <div>
-            <label className="mb-1 block text-sm">Titre (headline)</label>
-            <input className="input w-full" value={headline} onChange={e => setHeadline(e.target.value)} placeholder="Ergothérapeute…" />
+            <label className="mb-1 block text-sm">Nom <span className="text-red-500">*</span></label>
+            <input className="input w-full" value={lastName} onChange={e => setLastName(e.target.value)} required />
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm">Email professionnel <span className="text-red-500">*</span></label>
+            <input type="email" className="input w-full" value={email} onChange={e => setEmail(e.target.value)} required />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm">Numéro INAMI (11 chiffres)</label>
+            <input 
+              className="input w-full" 
+              placeholder="12345678901"
+              maxLength={11}
+              value={inamiNumber} 
+              onChange={e => {
+                const value = e.target.value.replace(/\D/g, '') // Only digits
+                setInamiNumber(value)
+              }}
+            />
+            {inamiNumber && !/^\d{11}$/.test(inamiNumber) && (
+              <div className="mt-1 text-xs text-red-600">
+                Le numéro INAMI doit contenir exactement 11 chiffres
+              </div>
+            )}
           </div>
         </div>
 
@@ -298,14 +365,10 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         </div>
 
         {/* Coordonnées rapides */}
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-sm">Téléphone</label>
             <input className="input w-full" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+32..." />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm">Site web</label>
-            <input type="url" className="input w-full" value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://…" />
           </div>
           <div>
             <label className="mb-1 block text-sm">Lien RDV</label>
@@ -473,11 +536,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
           ))}
         </div>
 
-        <div className="flex items-center justify-between">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={isPublished} onChange={e => setIsPublished(e.target.checked)} />
-            Rendre ma fiche publique
-          </label>
+        <div className="flex justify-end">
           <button type="submit" className="btn" disabled={saving}>
             {saving ? 'Enregistrement…' : 'Enregistrer'}
           </button>
@@ -486,8 +545,6 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         {msg && <p className="text-sm text-green-700">{msg}</p>}
         {err && <p className="text-sm text-red-700">{err}</p>}
       </form>
-
-      <p className="text-xs text-neutral-500">Slug public : <code>{therapist.slug ?? '—'}</code></p>
     </section>
   )
 }
