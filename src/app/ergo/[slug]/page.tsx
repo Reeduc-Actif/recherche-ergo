@@ -17,7 +17,7 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
   // 1) Thérapeute (profil de base + tarifs)
   const { data: t, error: tErr } = await supabase
     .from('therapists')
-    .select('id, slug, full_name, headline, bio, booking_url, website, email, phone, is_published, price_min, price_max, price_unit')
+    .select('id, slug, first_name, last_name, full_name, headline, bio, booking_url, website, email, phone, is_published, price_min, price_max, price_unit')
     .eq('slug', slug)
     .maybeSingle()
 
@@ -91,8 +91,9 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
   const price = formatPriceRange(t.price_min, t.price_max, t.price_unit)
 
   // 6) JSON-LD (SEO) — schema.org
+  const displayName = t.first_name && t.last_name ? `${t.first_name} ${t.last_name}` : t.full_name
   const ld = buildJsonLd({
-    name: t.full_name,
+    name: displayName,
     headline: t.headline ?? undefined,
     phone: t.phone ?? undefined,
     email: t.email ?? undefined,
@@ -119,7 +120,7 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
       <section className="rounded-2xl border p-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight">{t.full_name}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">{displayName}</h1>
             {t.headline && <p className="text-neutral-700">{t.headline}</p>}
             {languages?.length > 0 && (
               <div className="flex flex-wrap gap-2">

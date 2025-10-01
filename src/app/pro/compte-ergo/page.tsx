@@ -15,7 +15,7 @@ export default async function ProCompteErgoPage() {
   const { data: therapist } = await sb
     .from('therapists')
     .select(`
-      id, slug, profile_id, full_name, headline, bio, email, phone, website, booking_url,
+      id, slug, profile_id, first_name, last_name, full_name, inami_number, email, bio, phone, booking_url,
       price_hint, is_published, is_approved, price_min, price_max, price_unit
     `)
     .eq('profile_id', user.id)
