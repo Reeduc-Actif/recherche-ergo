@@ -110,119 +110,78 @@ export default function OnboardForm() {
     e.preventDefault()
     setOk(null); setErr(null)
 
-    if (!form.first_name.trim()) return setErr('Prénom requis.')
-    if (!form.last_name.trim()) return setErr('Nom requis.')
-    if (!form.email.trim()) return setErr('Email professionnel requis.')
-    if (!form.languages.length) return setErr('Sélectionnez au moins une langue.')
-    if (!form.specialties.length) return setErr('Sélectionnez au moins une spécialité.')
+    // Validations minimales côté frontend
+    if (!form.first_name.trim()) return setErr('Le prénom est requis.')
+    if (!form.last_name.trim()) return setErr('Le nom est requis.')
+    if (!form.email.trim()) return setErr('L\'email est requis.')
+    if (!form.specialties.length) return setErr('Veuillez sélectionner au moins une spécialité.')
+    if (!form.languages.length) return setErr('Veuillez sélectionner au moins une langue.')
+    if (locations.length === 0) return setErr('Veuillez ajouter au moins une localisation.')
     
-    // Validation INAMI
-    if (form.inami_number && !/^\d{8,}$/.test(form.inami_number)) {
-      return setErr('Le numéro INAMI doit contenir au moins 8 chiffres.')
+    // Validation email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(form.email)) return setErr('L\'email n\'est pas valide.')
+    
+    // Validation INAMI (optionnel mais si rempli, doit avoir 8+ caractères)
+    if (form.inami_number && form.inami_number.length < 8) {
+      return setErr('Le numéro INAMI doit contenir au moins 8 caractères.')
     }
-
-    // validation localisations
-    if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
-    
-    // Vérifier chaque location individuellement
-    for (let i = 0; i < locations.length; i++) {
-      const loc = locations[i]
-      if (loc.mode === 'cabinet') {
-        if (!loc.address || !loc.lon || !loc.lat || !loc.city || !loc.postal_code) {
-          return setErr(`❌ Le cabinet ${i + 1} n'a pas d'adresse complète. Vous devez utiliser l'autocomplétion : tapez une adresse et sélectionnez une suggestion de la liste.`)
-        }
-        if (!Number.isFinite(loc.lon) || !Number.isFinite(loc.lat)) {
-          return setErr(`❌ Le cabinet ${i + 1} a des coordonnées invalides. Utilisez l'autocomplétion pour sélectionner une adresse.`)
-        }
-        // Vérifier que l'adresse a été sélectionnée via l'autocomplétion (pas tapée manuellement)
-        if (!loc.mapbox_id || !loc.place_name) {
-          return setErr(`❌ Le cabinet ${i + 1} n'a pas été sélectionné via l'autocomplétion. Tapez une adresse et cliquez sur une suggestion.`)
-        }
-      } else {
-        if (!('cities' in loc) || !loc.cities || loc.cities.length === 0) {
-          return setErr(`La zone à domicile ${i + 1} doit contenir au moins une commune.`)
-        }
-      }
-    }
-    
-    // Filtrer les locations valides
-    const validLocations = locations.filter(loc => {
-      if (loc.mode === 'cabinet') {
-        return loc.address && Number.isFinite(loc.lon) && Number.isFinite(loc.lat) && loc.city && loc.postal_code
-      } else {
-        return 'cities' in loc && loc.cities && loc.cities.length > 0
-      }
-    })
-    
-    if (validLocations.length === 0) {
-      return setErr('Aucune localisation valide.')
-    }
-    
-    // Vérifier qu'il y a au moins un cabinet valide
-    const hasValidCabinet = validLocations.some(loc => loc.mode === 'cabinet')
-    if (!hasValidCabinet) {
-      return setErr('Vous devez avoir au moins un cabinet avec une adresse complète.')
-    }
-
-    const min = form.price_min ? Number(form.price_min) : undefined
-    const max = form.price_max ? Number(form.price_max) : undefined
-    if (min && max && min > max) return setErr('Le tarif min. ne peut pas dépasser le max.')
 
     setLoading(true)
-    try {
-      // Transform locations to match new API contract
-      const transformedLocations = validLocations.map(loc => {
-        if (loc.mode === 'cabinet') {
-          return {
-            mode: 'cabinet',
-            address: loc.address,
-            postal_code: loc.postal_code,
-            city: loc.city,
-            country: 'BE' as const,
-            coords: {
-              type: 'Point' as const,
-              coordinates: [loc.lon!, loc.lat!]
-            },
-            // Keep meta data for reference
-            ...(loc.place_name && { place_name: loc.place_name }),
-            ...(loc.mapbox_id && { mapbox_id: loc.mapbox_id }),
-            ...(loc.street && { street: loc.street }),
-            ...(loc.house_number && { house_number: loc.house_number }),
-            ...(loc.bbox && { bbox: loc.bbox }),
-          }
-        } else {
-          return {
-            mode: 'domicile',
-            country: 'BE' as const,
-            cities: loc.cities.map(String)
-          }
-        }
-      })
 
-      console.log('📤 Sending payload:', { ...form, locations: transformedLocations })
-      const res = await fetch('/api/pro/onboard', {
+    try {
+      // Préparer toutes les données à envoyer au webhook n8n
+      const payload = {
+        // Données personnelles
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        inami_number: form.inami_number.trim() || undefined,
+        email: form.email.trim(),
+        bio: form.bio.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        booking_url: form.booking_url.trim() || undefined,
+        
+        // Tarifs
+        price_min: form.price_min.trim() || undefined,
+        price_max: form.price_max.trim() || undefined,
+        price_unit: form.price_unit,
+        
+        // Sélections
+        languages: form.languages,
+        specialties: form.specialties,
+        
+        // Localisations (données brutes)
+        locations: locations,
+      }
+
+      console.log('📤 Sending to n8n webhook:', payload)
+      
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_VALIDATION_FORMULAIRE
+      if (!webhookUrl) {
+        throw new Error('URL du webhook n8n non configurée')
+      }
+
+      const res = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          inami_number: form.inami_number.trim() || undefined,
-          email: form.email.trim(),
-          bio: form.bio.trim() || undefined,
-          phone: form.phone.trim() || undefined,
-          booking_url: form.booking_url.trim() || undefined,
-          price_min: min,
-          price_max: max,
-          price_unit: form.price_unit,
-          languages: form.languages,
-          specialties: form.specialties,
-          locations: transformedLocations,
-        }),
+        body: JSON.stringify(payload),
       })
-      const json: { ok?: boolean; error?: string; slug?: string } = await res.json()
-      if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API')
-      setOk('Profil créé ! Vous pouvez maintenant voir votre fiche publique.')
-      // window.location.assign(`/ergo/${json.slug}`)
+
+      const result = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(result?.error || result?.message || 'Erreur lors de la validation')
+      }
+
+      // Gérer la réponse du webhook n8n
+      if (result.success) {
+        setOk(result.message || 'Profil créé avec succès !')
+        // Optionnel: redirection ou reset du formulaire
+        // window.location.assign(`/ergo/${result.slug}`)
+      } else {
+        setErr(result.error || result.message || 'Erreur lors de la création du profil')
+      }
+
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Erreur inconnue'
       setErr(msg)
@@ -235,37 +194,28 @@ export default function OnboardForm() {
     <form onSubmit={onSubmit} className="space-y-6 rounded-2xl border p-4">
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm">Prénom <span className="text-red-500">*</span></label>
-          <input className="input" value={form.first_name} onChange={e => setForm(v => ({ ...v, first_name: e.target.value }))} required />
+          <label className="mb-1 block text-sm">Prénom</label>
+          <input className="input" value={form.first_name} onChange={e => setForm(v => ({ ...v, first_name: e.target.value }))} />
         </div>
         <div>
-          <label className="mb-1 block text-sm">Nom <span className="text-red-500">*</span></label>
-          <input className="input" value={form.last_name} onChange={e => setForm(v => ({ ...v, last_name: e.target.value }))} required />
+          <label className="mb-1 block text-sm">Nom</label>
+          <input className="input" value={form.last_name} onChange={e => setForm(v => ({ ...v, last_name: e.target.value }))} />
         </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm">Email professionnel <span className="text-red-500">*</span></label>
-          <input type="email" className="input" value={form.email} onChange={e => setForm(v => ({ ...v, email: e.target.value }))} required />
+          <label className="mb-1 block text-sm">Email professionnel</label>
+          <input type="email" className="input" value={form.email} onChange={e => setForm(v => ({ ...v, email: e.target.value }))} />
         </div>
         <div>
-          <label className="mb-1 block text-sm">Numéro INAMI (8+ chiffres)</label>
+          <label className="mb-1 block text-sm">Numéro INAMI</label>
           <input 
             className="input" 
             placeholder="12345678"
-            maxLength={15}
             value={form.inami_number} 
-            onChange={e => {
-              const value = e.target.value.replace(/\D/g, '') // Only digits
-              setForm(v => ({ ...v, inami_number: value }))
-            }}
+            onChange={e => setForm(v => ({ ...v, inami_number: e.target.value }))}
           />
-          {form.inami_number && !/^\d{8,}$/.test(form.inami_number) && (
-            <div className="mt-1 text-xs text-red-600">
-              Le numéro INAMI doit contenir au moins 8 chiffres
-            </div>
-          )}
         </div>
       </div>
 
@@ -277,7 +227,19 @@ export default function OnboardForm() {
       <div className="grid gap-3 md:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm">Téléphone</label>
-          <input className="input" placeholder="+32..." value={form.phone} onChange={e => setForm(v => ({ ...v, phone: e.target.value }))} />
+          <div className="relative">
+            <input 
+              className="input pl-12" 
+              placeholder="123456789"
+              value={form.phone.replace('+32', '')} 
+              onChange={e => {
+                const phoneNumber = e.target.value.replace(/\D/g, '') // Only digits
+                setForm(v => ({ ...v, phone: `+32${phoneNumber}` }))
+              }}
+              maxLength={12}
+            />
+            <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">+32</span>
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm">Lien de prise de RDV</label>
@@ -365,9 +327,7 @@ export default function OnboardForm() {
             {loc.mode === 'cabinet' ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm">
-                    Adresse du cabinet <span className="text-red-500">*</span>
-                  </label>
+                  <label className="mb-1 block text-sm">Adresse du cabinet</label>
                   <AddressAutocomplete
                     value={loc.address || ''}
                     onChange={(addressData) => {
@@ -388,25 +348,6 @@ export default function OnboardForm() {
                     }}
                     placeholder="Tapez une adresse et sélectionnez une suggestion..."
                   />
-                  <div className="mt-1 text-xs text-gray-600">
-                    💡 Tapez au moins 3 caractères, puis cliquez sur une suggestion de la liste
-                  </div>
-                </div>
-                <div className={`text-xs p-2 rounded ${
-                  loc.address && loc.lon && loc.lat 
-                    ? 'text-green-700 bg-green-50' 
-                    : 'text-red-700 bg-red-50'
-                }`}>
-                  <strong>Adresse sélectionnée :</strong> {loc.address || 'Aucune adresse sélectionnée'}
-                  {loc.lon && loc.lat ? (
-                    <span className="ml-2 text-green-600">
-                      ✓ Coordonnées: {loc.lon.toFixed(6)}, {loc.lat.toFixed(6)}
-                    </span>
-                  ) : (
-                    <span className="ml-2 text-red-600">
-                      ❌ OBLIGATOIRE : Tapez une adresse et sélectionnez une suggestion de la liste
-                    </span>
-                  )}
                 </div>
               </div>
             ) : (

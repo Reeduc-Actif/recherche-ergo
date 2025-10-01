@@ -78,7 +78,10 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
   const [inamiNumber, setInamiNumber] = useState(therapist.inami_number ?? '')
   const [email, setEmail] = useState(therapist.email ?? '')
   const [bio, setBio] = useState(therapist.bio ?? '')
-  const [phone, setPhone] = useState(therapist.phone ?? '')
+  const [phone, setPhone] = useState(() => {
+    const existingPhone = therapist.phone ?? ''
+    return existingPhone.startsWith('+32') ? existingPhone : `+32${existingPhone.replace(/^\+32/, '')}`
+  })
   const [bookingUrl, setBookingUrl] = useState(therapist.booking_url ?? '')
   const [priceMin, setPriceMin] = useState<string>(therapist.price_min?.toString() ?? '')
   const [priceMax, setPriceMax] = useState<string>(therapist.price_max?.toString() ?? '')
@@ -207,110 +210,80 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
     e.preventDefault()
     setMsg(null); setErr(null)
 
-    if (!firstName.trim()) return setErr('Prénom requis.')
-    if (!lastName.trim()) return setErr('Nom requis.')
-    if (!email.trim()) return setErr('Email professionnel requis.')
-    if (!languages.length) return setErr('Sélectionnez au moins une langue.')
-    if (!specialties.length) return setErr('Sélectionnez au moins une spécialité.')
-    if (locations.length === 0) return setErr('Ajoutez au moins une localisation.')
+    // Validations minimales côté frontend
+    if (!firstName.trim()) return setErr('Le prénom est requis.')
+    if (!lastName.trim()) return setErr('Le nom est requis.')
+    if (!email.trim()) return setErr('L\'email est requis.')
+    if (!specialties.length) return setErr('Veuillez sélectionner au moins une spécialité.')
+    if (!languages.length) return setErr('Veuillez sélectionner au moins une langue.')
+    if (locations.length === 0) return setErr('Veuillez ajouter au moins une localisation.')
     
-    // Validation INAMI
-    if (inamiNumber && !/^\d{8,}$/.test(inamiNumber)) {
-      return setErr('Le numéro INAMI doit contenir au moins 8 chiffres.')
+    // Validation email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) return setErr('L\'email n\'est pas valide.')
+    
+    // Validation INAMI (optionnel mais si rempli, doit avoir 8+ caractères)
+    if (inamiNumber && inamiNumber.length < 8) {
+      return setErr('Le numéro INAMI doit contenir au moins 8 caractères.')
     }
-
-    for (const loc of locations) {
-      if (loc.mode === 'cabinet') {
-        if (!loc.street || !loc.house_number || !loc.city || !loc.postal_code)
-          return setErr('Chaque cabinet doit avoir rue, numéro, ville et code postal.')
-        } else {
-        if (!('cities' in loc) || !loc.cities || loc.cities.length === 0)
-          return setErr('Chaque zone à domicile doit contenir au moins une commune.')
-      }
-    }
-
-    const minNum = priceMin ? Number(priceMin) : undefined
-    const maxNum = priceMax ? Number(priceMax) : undefined
-    if (minNum && maxNum && minNum > maxNum) return setErr('price_min ne peut pas dépasser price_max.')
 
     setSaving(true)
+
     try {
-      // 1) Update colonnes therapist
-      const payloadTherapist = {
+      // Préparer toutes les données à envoyer au webhook n8n
+      const payload = {
+        // ID du thérapeute pour la mise à jour
+        therapist_id: therapist.id,
+        
+        // Données personnelles
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        inami_number: inamiNumber.trim() || null,
+        inami_number: inamiNumber.trim() || undefined,
         email: email.trim(),
-        bio: bio.trim() || null,
-        phone: phone.trim() || null,
-        booking_url: bookingUrl.trim() || null,
-        price_min: minNum,
-        price_max: maxNum,
-        price_unit: priceUnit || null,
-        // Generate full_name for backward compatibility
-        full_name: `${firstName.trim()} ${lastName.trim()}`,
+        bio: bio.trim() || undefined,
+        phone: phone.trim() || undefined,
+        booking_url: bookingUrl.trim() || undefined,
+        
+        // Tarifs
+        price_min: priceMin.trim() || undefined,
+        price_max: priceMax.trim() || undefined,
+        price_unit: priceUnit,
+        
+        // Sélections
+        languages: languages,
+        specialties: specialties,
+        
+        // Localisations (données brutes)
+        locations: locations,
       }
-      const { error: upErr } = await sb
-        .from('therapists')
-        .update(payloadTherapist)
-        .eq('id', therapist.id)
-        .select('id')
-        .single()
-      if (upErr) throw upErr
 
-      // 2) Sync relations + localisations (idempotent côté route)
-      // Transform locations to match new API contract
-      const transformedLocations = locations.map(loc => {
-        if (loc.mode === 'cabinet') {
-          return {
-            mode: 'cabinet',
-            address: loc.address,
-            postal_code: loc.postal_code,
-            city: loc.city,
-            country: 'BE' as const,
-            coords: loc.lon && loc.lat ? {
-              type: 'Point' as const,
-              coordinates: [loc.lon, loc.lat]
-            } : undefined,
-            // Keep meta data for reference
-            ...(loc.place_name && { place_name: loc.place_name }),
-            ...(loc.mapbox_id && { mapbox_id: loc.mapbox_id }),
-            ...(loc.street && { street: loc.street }),
-            ...(loc.house_number && { house_number: loc.house_number }),
-            ...(loc.bbox && { bbox: loc.bbox }),
-          }
-        } else {
-          return {
-            mode: 'domicile',
-            country: 'BE' as const,
-            cities: loc.cities.map(String)
-          }
-        }
-      })
+      console.log('📤 Sending to n8n webhook:', payload)
+      
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_UPDATE_FORMULAIRE
+      if (!webhookUrl) {
+        throw new Error('URL du webhook n8n non configurée')
+      }
 
-      const res = await fetch('/api/pro/onboard', {
+      const res = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          inami_number: inamiNumber.trim() || undefined,
-          email: email.trim(),
-          bio: bio.trim() || undefined,
-          phone: phone.trim() || undefined,
-          booking_url: bookingUrl.trim() || undefined,
-          languages,
-          specialties,
-          locations: transformedLocations,
-          price_min: minNum,
-          price_max: maxNum,
-          price_unit: priceUnit || undefined,
-        }),
+        body: JSON.stringify(payload),
       })
-      const json: { ok?: boolean; error?: string } = await res.json()
-      if (!res.ok || !json.ok) throw new Error(json?.error || 'Erreur API (onboard)')
 
-      setMsg('Profil ergothérapeute mis à jour !')
+      const result = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(result?.error || result?.message || 'Erreur lors de la mise à jour')
+      }
+
+      // Gérer la réponse du webhook n8n
+      if (result.success) {
+        setMsg(result.message || 'Profil mis à jour avec succès !')
+        // Optionnel: recharger les données ou rediriger
+      } else {
+        setErr(result.error || result.message || 'Erreur lors de la mise à jour du profil')
+      }
+
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Mise à jour impossible.'
       setErr(message)
@@ -325,37 +298,28 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         {/* Identité */}
         <div className="grid gap-3 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm">Prénom <span className="text-red-500">*</span></label>
-            <input className="input w-full" value={firstName} onChange={e => setFirstName(e.target.value)} required />
+            <label className="mb-1 block text-sm">Prénom</label>
+            <input className="input w-full" value={firstName} onChange={e => setFirstName(e.target.value)} />
           </div>
           <div>
-            <label className="mb-1 block text-sm">Nom <span className="text-red-500">*</span></label>
-            <input className="input w-full" value={lastName} onChange={e => setLastName(e.target.value)} required />
+            <label className="mb-1 block text-sm">Nom</label>
+            <input className="input w-full" value={lastName} onChange={e => setLastName(e.target.value)} />
           </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm">Email professionnel <span className="text-red-500">*</span></label>
-            <input type="email" className="input w-full" value={email} onChange={e => setEmail(e.target.value)} required />
+            <label className="mb-1 block text-sm">Email professionnel</label>
+            <input type="email" className="input w-full" value={email} onChange={e => setEmail(e.target.value)} />
           </div>
           <div>
-            <label className="mb-1 block text-sm">Numéro INAMI (8+ chiffres)</label>
+            <label className="mb-1 block text-sm">Numéro INAMI</label>
             <input 
               className="input w-full" 
               placeholder="12345678"
-              maxLength={15}
               value={inamiNumber} 
-              onChange={e => {
-                const value = e.target.value.replace(/\D/g, '') // Only digits
-                setInamiNumber(value)
-              }}
+              onChange={e => setInamiNumber(e.target.value)}
             />
-            {inamiNumber && !/^\d{8,}$/.test(inamiNumber) && (
-              <div className="mt-1 text-xs text-red-600">
-                Le numéro INAMI doit contenir au moins 8 chiffres
-              </div>
-            )}
           </div>
         </div>
 
@@ -368,7 +332,19 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         <div className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-sm">Téléphone</label>
-            <input className="input w-full" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+32..." />
+            <div className="relative">
+              <input 
+                className="input w-full pl-12" 
+                placeholder="123456789"
+                value={phone.replace('+32', '')} 
+                onChange={e => {
+                  const phoneNumber = e.target.value.replace(/\D/g, '') // Only digits
+                  setPhone(`+32${phoneNumber}`)
+                }}
+                maxLength={12}
+              />
+              <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">+32</span>
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-sm">Lien RDV</label>
