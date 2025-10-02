@@ -12,7 +12,7 @@ export default async function ProCompteErgoPage() {
   const { data: { user } } = await sb.auth.getUser()
   if (!user) redirect('/pro/connexion')
 
-  const { data: therapist, error: therapistError } = await sb
+  const { data: therapist } = await sb
     .from('therapists')
     .select(`
       id, slug, profile_id, first_name, last_name, inami_number, email, bio, phone, booking_url,

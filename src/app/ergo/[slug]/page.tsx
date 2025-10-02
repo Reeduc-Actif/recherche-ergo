@@ -17,7 +17,7 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
   // 1) Thérapeute (profil de base + tarifs)
   const { data: t, error: tErr } = await supabase
     .from('therapists')
-    .select('id, slug, first_name, last_name, full_name, headline, bio, booking_url, website, email, phone, is_published, price_min, price_max, price_unit')
+    .select('id, slug, first_name, last_name, inami_number, bio, booking_url, email, phone, is_published, price_min, price_max, price_unit')
     .eq('slug', slug)
     .maybeSingle()
 
@@ -25,15 +25,65 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
   if (!t?.id) return <div className="text-sm text-neutral-600">Profil introuvable.</div>
   if (!t.is_published) return <div className="text-sm text-neutral-600">Ce profil n’est pas publié.</div>
 
-  // 2) Localisations (adresses + modes + coords)
-  const { data: locs } = await supabase
+  // 2) Localisations (cabinets + zones à domicile)
+  const { data: cabinets } = await supabase
     .from('therapist_locations')
-    .select('address, city, postal_code, country, modes, coords')
+    .select('id, street, house_number, city, postal_code, country, coords, lon, lat')
     .eq('therapist_id', t.id)
     .order('id', { ascending: true })
 
-  const firstLoc = (locs ?? [])[0] ?? null
-  const firstCoords = parseWktPoint(firstLoc?.coords ?? null) // {lon,lat} | null
+  const { data: homeCities } = await supabase
+    .from('therapist_home_municipalities')
+    .select('nis_code')
+    .eq('therapist_id', t.id)
+
+  // Construire les localisations pour l'affichage
+  const locations: Array<{
+    type: 'cabinet' | 'domicile'
+    address?: string
+    city?: string
+    postal_code?: string
+    country?: string
+    coords?: string
+    cities?: string[]
+  }> = []
+
+  // Ajouter les cabinets
+  if (cabinets) {
+    cabinets.forEach(cabinet => {
+      const streetParts = [cabinet.street, cabinet.house_number].filter(Boolean)
+      const fullAddress = streetParts.join(' ')
+      
+      locations.push({
+        type: 'cabinet',
+        address: fullAddress,
+        city: cabinet.city,
+        postal_code: cabinet.postal_code,
+        country: cabinet.country,
+        coords: cabinet.coords
+      })
+    })
+  }
+
+  // Ajouter les zones à domicile
+  if (homeCities && homeCities.length > 0) {
+    // Récupérer les noms des villes
+    const nisCodes = homeCities.map(h => h.nis_code)
+    const { data: cityNames } = await supabase
+      .from('cities_be')
+      .select('nis_code, name_fr')
+      .in('nis_code', nisCodes)
+    
+    const cityNamesList = cityNames?.map(c => c.name_fr) || []
+    
+    locations.push({
+      type: 'domicile',
+      cities: cityNamesList
+    })
+  }
+
+  const firstLoc = locations.find(l => l.type === 'cabinet') ?? null
+  const firstCoords = firstLoc?.coords ? parseWktPoint(firstLoc.coords) : null
 
   // 3) Spécialités (jointes pour labels + parent_slug)
   const { data: specsRaw } = await supabase
@@ -91,13 +141,11 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
   const price = formatPriceRange(t.price_min, t.price_max, t.price_unit)
 
   // 6) JSON-LD (SEO) — schema.org
-  const displayName = t.first_name && t.last_name ? `${t.first_name} ${t.last_name}` : t.full_name
+  const displayName = t.first_name && t.last_name ? `${t.first_name} ${t.last_name}` : 'Ergothérapeute'
   const ld = buildJsonLd({
     name: displayName,
-    headline: t.headline ?? undefined,
     phone: t.phone ?? undefined,
     email: t.email ?? undefined,
-    url: t.website ?? undefined,
     address: firstLoc ? {
       streetAddress: firstLoc.address ?? '',
       addressLocality: firstLoc.city ?? '',
@@ -121,7 +169,7 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight">{displayName}</h1>
-            {t.headline && <p className="text-neutral-700">{t.headline}</p>}
+            <p className="text-neutral-700">Ergothérapeute</p>
             {languages?.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {languages.map((l, i) => (
@@ -148,11 +196,6 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
             {t.email && (
               <a href={`mailto:${t.email}`} className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50">
                 Écrire un e-mail
-              </a>
-            )}
-            {t.website && (
-              <a href={t.website} target="_blank" rel="noreferrer" className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50">
-                Site web
               </a>
             )}
           </div>
@@ -201,17 +244,28 @@ export default async function ErgoPage({ params }: { params: Promise<Params> }) 
       )}
 
       {/* Lieux + carte */}
-      {locs && locs.length > 0 && (
+      {locations && locations.length > 0 && (
         <section className="grid gap-6 md:grid-cols-5">
           <div className="md:col-span-2">
             <h2 className="text-lg font-medium">Lieux de consultation</h2>
-            <div className="mt-3 space-y-2 text-sm text-neutral-700">
-              {locs.map((l, i) => (
+            <div className="mt-3 space-y-3 text-sm text-neutral-700">
+              {locations.map((l, i) => (
                 <div key={i}>
-                  {[l.address, [l.postal_code, l.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
-                  {l.modes?.length ? (
-                    <span className="ml-1 text-neutral-500">— {l.modes.map(modeLabel).join(', ')}</span>
-                  ) : null}
+                  {l.type === 'cabinet' ? (
+                    <div>
+                      <div className="font-medium text-neutral-900">Au cabinet</div>
+                      <div>
+                        {[l.address, [l.postal_code, l.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="font-medium text-neutral-900">À domicile</div>
+                      <div>
+                        Zones couvertes : {l.cities?.join(', ') || 'Non spécifiées'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -247,12 +301,6 @@ function slugToLabelFallback(slug: string) {
   return slug.split('-').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')
 }
 
-function modeLabel(m: string) {
-  if (m === 'cabinet') return 'Au cabinet'
-  if (m === 'domicile') return 'À domicile'
-  if (m === 'visio') return 'En visio'
-  return m
-}
 
 // WKT "SRID=4326;POINT(lon lat)" -> { lon, lat }
 function parseWktPoint(wkt: string | null): { lon: number; lat: number } | null {
@@ -277,10 +325,8 @@ function displayAddress(loc?: { address?: string | null; postal_code?: string | 
 
 function buildJsonLd(input: {
   name: string
-  headline?: string
   phone?: string
   email?: string
-  url?: string
   address?: { streetAddress: string; addressLocality: string; postalCode: string; addressCountry: string }
   geo?: { lon: number; lat: number }
   languages?: string[]
@@ -291,9 +337,8 @@ function buildJsonLd(input: {
     '@context': 'https://schema.org',
     '@type': 'MedicalBusiness',
     name: input.name,
+    description: 'Ergothérapeute professionnel',
   }
-  if (input.headline) ld.description = input.headline
-  if (input.url) ld.url = input.url
   if (input.phone) ld.telephone = input.phone
   if (input.email) ld.email = input.email
   if (input.address) ld.address = { '@type': 'PostalAddress', ...input.address }

@@ -53,6 +53,11 @@ type HomeMunicipalityRow = {
   nis_code: number
 }
 
+type CityRow = {
+  nis_code: number
+  name_fr: string
+}
+
 
 /* ---------- Localisations (unions discriminées) ---------- */
 type CabinetDraft = {
@@ -206,7 +211,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
           // Créer un mapping NIS -> nom de ville
           const cityMapping: Record<number, string> = {}
           if (cities) {
-            cities.forEach((city: any) => {
+            cities.forEach((city: CityRow) => {
               cityMapping[city.nis_code] = city.name_fr
             })
           }
