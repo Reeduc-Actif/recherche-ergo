@@ -20,13 +20,11 @@ type Therapist = {
   profile_id: string
   first_name: string | null
   last_name: string | null
-  full_name: string | null // Keep for backward compatibility
   inami_number: string | null
   email: string | null
   bio: string | null
   phone: string | null
   booking_url: string | null
-  price_hint: string | null
   is_published: boolean | null
   is_approved: boolean | null
   price_min: number | null
