@@ -47,6 +47,16 @@ type LocationDraft = CabinetDraft | DomicileDraft
 export default function OnboardForm() {
   const sb = supabaseBrowser()
 
+  // --- utilisateur connecté ---
+  const [userId, setUserId] = useState<string | null>(null)
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await sb.auth.getUser()
+      setUserId(user?.id || null)
+    }
+    getUser()
+  }, [sb])
+
   // --- spécialités depuis la DB ---
   const [specs, setSpecs] = useState<SpecRow[]>([])
   useEffect(() => {
@@ -111,6 +121,7 @@ export default function OnboardForm() {
     setOk(null); setErr(null)
 
     // Validations minimales côté frontend
+    if (!userId) return setErr('Vous devez être connecté pour créer un profil.')
     if (!form.first_name.trim()) return setErr('Le prénom est requis.')
     if (!form.last_name.trim()) return setErr('Le nom est requis.')
     if (!form.email.trim()) return setErr('L\'email est requis.')
@@ -132,6 +143,9 @@ export default function OnboardForm() {
     try {
       // Préparer toutes les données à envoyer au webhook n8n
       const payload = {
+        // ID du profil utilisateur
+        profile_id: userId,
+        
         // Données personnelles
         first_name: form.first_name.trim(),
         last_name: form.last_name.trim(),
