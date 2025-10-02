@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import CityAutocomplete from '@/components/ui/CityAutocomplete'
 import CityAutocompleteMulti from '@/components/ui/CityAutocompleteMulti'
+import AddressAutocomplete from '@/components/ui/AddressAutocomplete'
 
 type Mode = 'cabinet' | 'domicile'
 
@@ -45,7 +45,7 @@ type LocationRow = {
 }
 
 
-/* --- Brouillons de localisation (discriminated union) --- */
+/* ---------- Localisations (unions discriminées) ---------- */
 type CabinetDraft = {
   id?: number
   mode: 'cabinet'
@@ -53,6 +53,7 @@ type CabinetDraft = {
   postal_code: string
   city: string
   country: 'BE'
+  // méta géo (remplies par l'autocomplete)
   lon?: number
   lat?: number
   street?: string
@@ -65,7 +66,7 @@ type DomicileDraft = {
   id?: number
   mode: 'domicile'
   country: 'BE'
-  cities: (number | string)[]
+  cities: (number | string)[] // NIS
 }
 type LocationDraft = CabinetDraft | DomicileDraft
 
@@ -106,28 +107,22 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
   // --- localisations ---
   const [locations, setLocations] = useState<LocationDraft[]>([])
 
-  const addLocation = (mode: Mode) =>
+  const addLocation = (mode: Mode) => {
     setLocations(v => [
       ...v,
       mode === 'cabinet'
-        ? { mode, address: '', postal_code: '', city: '', country: 'BE' }
+        ? { mode, address: '', street: '', house_number: '', postal_code: '', city: '', country: 'BE' }
         : { mode, country: 'BE', cities: [] },
     ])
+  }
 
   const removeLocation = (idx: number) => setLocations(v => v.filter((_, i) => i !== idx))
 
-  // surcharges pour éviter tout `any` au patch
+  // surcharges pour patch strict typé
   function updateLoc(idx: number, patch: Partial<CabinetDraft>): void
   function updateLoc(idx: number, patch: Partial<DomicileDraft>): void
   function updateLoc(idx: number, patch: Partial<LocationDraft>): void {
-    setLocations(v =>
-      v.map((l, i) => (i === idx ? ({ ...l, ...patch } as LocationDraft) : l)),
-    )
-  }
-
-  // Helper pour construire l'adresse complète
-  const buildAddress = (street: string, houseNumber: string) => {
-    return [street, houseNumber].filter(Boolean).join(' ')
+    setLocations(v => v.map((l, i) => (i === idx ? ({ ...l, ...patch } as LocationDraft) : l)))
   }
 
   // --- préchargement depuis DB ---
@@ -438,71 +433,36 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
               {loc.mode === 'cabinet' ? (
                 <div className="space-y-3">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm">Rue</label>
-                      <input
-                        type="text"
-                        className="input w-full"
-                        value={loc.street || ''}
-                        onChange={(e) => {
-                          const street = e.target.value
-                          updateLoc(idx, {
-                            street,
-                            address: buildAddress(street, loc.house_number || '')
-                          } as Partial<CabinetDraft>)
-                        }}
-                        placeholder="Rue de la Paix"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm">Numéro</label>
-                      <input
-                        type="text"
-                        className="input w-full"
-                        value={loc.house_number || ''}
-                        onChange={(e) => {
-                          const houseNumber = e.target.value
-                          updateLoc(idx, {
-                            house_number: houseNumber,
-                            address: buildAddress(loc.street || '', houseNumber)
-                          } as Partial<CabinetDraft>)
-                        }}
-                        placeholder="123"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm">Code postal</label>
-                      <input
-                        type="text"
-                        className="input w-full"
-                        value={loc.postal_code || ''}
-                        onChange={(e) => updateLoc(idx, { postal_code: e.target.value } as Partial<CabinetDraft>)}
-                        placeholder="1000"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm">Ville</label>
-                      <CityAutocomplete
-                        value={loc.city || ''}
-                        onChange={(city) => updateLoc(idx, { city } as Partial<CabinetDraft>)}
-                        placeholder="Bruxelles"
-                        locale="fr"
-                      />
-                    </div>
-                  </div>
-                  <div className="text-xs text-neutral-500 bg-neutral-50 p-2 rounded">
-                    <strong>Adresse complète :</strong> {loc.address || 'Rue + Numéro'} {loc.postal_code && loc.city ? `, ${loc.postal_code} ${loc.city}` : ''}
+                  <div>
+                    <label className="mb-1 block text-sm">Adresse du cabinet</label>
+                    <AddressAutocomplete
+                      value={loc.address || ''}
+                      onChange={(addressData) => {
+                        console.log('🏠 AddressAutocomplete onChange:', addressData)
+                        updateLoc(idx, {
+                          address: addressData.address,
+                          postal_code: addressData.postal_code,
+                          city: addressData.city,
+                          country: addressData.country,
+                          lon: addressData.lon,
+                          lat: addressData.lat,
+                          place_name: addressData.place_name,
+                          mapbox_id: addressData.mapbox_id,
+                          street: addressData.street,
+                          house_number: addressData.house_number,
+                          bbox: addressData.bbox,
+                        } as Partial<CabinetDraft>)
+                      }}
+                      placeholder="Tapez une adresse et sélectionnez une suggestion..."
+                    />
                   </div>
                 </div>
               ) : (
                 <div>
                   <div className="mb-1 text-sm text-neutral-600">Villes couvertes</div>
                   <CityAutocompleteMulti
-                    value={loc.cities}
-                    onChange={(codes) => updateLoc(idx, { cities: codes.map(String) } as Partial<DomicileDraft>)}
+                    value={(loc as DomicileDraft).cities ?? []}
+                    onChange={(codes) => updateLoc(idx, ({ cities: codes } as Partial<DomicileDraft>))}
                     placeholder="Rechercher une ville…"
                     locale="fr"
                   />
