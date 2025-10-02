@@ -33,13 +33,24 @@ type Therapist = {
 }
 
 /* --- Tables côté lecture --- */
-type LocationRow = {
+type CabinetRow = {
   id: number
-  address: string | null
-  postal_code: string | null
+  therapist_id: string
+  street: string | null
   city: string | null
+  postal_code: string | null
   country: string | null
-  modes: string[] | null
+  coords: string | null
+  mapbox_id: string | null
+  bbox: number[] | null
+  lon: number | null
+  lat: number | null
+  house_number: string | null
+}
+
+type HomeMunicipalityRow = {
+  therapist_id: string
+  nis_code: number
 }
 
 
@@ -140,51 +151,53 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
         .eq('therapist_id', therapist.id)
       setSpecialties((sps ?? []).map(s => s.specialty_slug))
 
-      // localisations
-      const { data: locs } = await sb
+      // Charger les cabinets
+      const { data: cabinets } = await sb
         .from('therapist_locations')
-        .select('id,address,postal_code,city,country,modes')
+        .select('id, therapist_id, street, city, postal_code, country, coords, mapbox_id, bbox, lon, lat, house_number')
         .eq('therapist_id', therapist.id)
         .order('id', { ascending: true })
 
+      // Charger les zones à domicile
+      const { data: homeCities } = await sb
+        .from('therapist_home_municipalities')
+        .select('therapist_id, nis_code')
+        .eq('therapist_id', therapist.id)
+
       const drafts: LocationDraft[] = []
-      for (const l of (locs ?? []) as LocationRow[]) {
-        const modes = l.modes ?? []
-        const countryBE = 'BE' as const
 
-        if (modes.includes('domicile')) {
-          const { data: homeCities } = await sb
-            .from('therapist_home_municipalities')
-            .select('nis_code')
-            .eq('therapist_id', therapist.id)
+      // Ajouter les cabinets
+      for (const cabinet of (cabinets ?? []) as CabinetRow[]) {
+        // Construire l'adresse complète
+        const addressParts = [cabinet.street, cabinet.house_number].filter(Boolean)
+        const address = addressParts.join(' ')
 
-          const nisList = (homeCities ?? []).map((r: { nis_code: number }) => r.nis_code)
-
-          drafts.push({
-            mode: 'domicile',
-            country: 'BE',
-            cities: nisList,     // NIS list
-          })
-        }
-        if (modes.includes('cabinet')) {
-          // Parser l'adresse existante pour extraire rue et numéro
-          const address = l.address ?? ''
-          const addressParts = address.split(' ')
-          const street = addressParts.slice(0, -1).join(' ') || ''
-          const houseNumber = addressParts[addressParts.length - 1] || ''
-          
-          drafts.push({
-            id: l.id,
-            mode: 'cabinet',
-            address,
-            street,
-            house_number: houseNumber,
-            postal_code: l.postal_code ?? '',
-            city: l.city ?? '',
-            country: countryBE,
-          })
-        }
+        drafts.push({
+          id: cabinet.id,
+          mode: 'cabinet',
+          address: address,
+          street: cabinet.street ?? '',
+          house_number: cabinet.house_number ?? '',
+          postal_code: cabinet.postal_code ?? '',
+          city: cabinet.city ?? '',
+          country: 'BE',
+          lon: cabinet.lon ?? undefined,
+          lat: cabinet.lat ?? undefined,
+          mapbox_id: cabinet.mapbox_id ?? undefined,
+          bbox: cabinet.bbox ?? undefined,
+        })
       }
+
+      // Ajouter la zone à domicile (s'il y en a une)
+      if (homeCities && homeCities.length > 0) {
+        const nisList = (homeCities as HomeMunicipalityRow[]).map(r => r.nis_code)
+        drafts.push({
+          mode: 'domicile',
+          country: 'BE',
+          cities: nisList,
+        })
+      }
+
       setLocations(drafts)
     }
     load()
