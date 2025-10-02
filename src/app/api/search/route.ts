@@ -12,6 +12,7 @@ const Payload = z.object({
   radius_km: z.number().int().min(1).max(300).optional(),
   specialties_filter: z.array(z.string().min(1)).nonempty().optional(),
   languages_filter: z.array(z.string().min(1)).nonempty().optional(),
+  city: z.string().min(1).optional(),
 })
 
 type Mode = 'cabinet' | 'domicile'
@@ -19,8 +20,8 @@ type Mode = 'cabinet' | 'domicile'
 type JoinedTherapist = {
   id: string
   slug: string
-  full_name: string
-  headline: string | null
+  first_name: string
+  last_name: string
   booking_url: string | null
   is_published: boolean | null
 }
@@ -46,14 +47,14 @@ type JoinedLocationRaw = Omit<JoinedLocation, 'therapists'> & {
 type ApiRow = {
   therapist_id: string
   slug: string
-  full_name: string
-  headline: string | null
+  first_name: string
+  last_name: string
   booking_url: string | null
   location_id: number
   address: string | null
   city: string | null
   postal_code: string | null
-  modes: string[] | null
+  distance_m: number | null
   lon: number | null
   lat: number | null
   languages: string[] | null
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: 'Invalid payload', results: [] as ApiRow[] }, { status: 400 })
     }
-    const { specialties_filter, languages_filter } = parsed.data
+    const { lat, lng, radius_km, specialties_filter, languages_filter, city } = parsed.data
 
     const supabase = await supabaseServer()
 
@@ -104,66 +105,169 @@ export async function POST(req: Request) {
       therapistFilter = therapistIdsByLang ?? therapistIdsBySpec ?? null
     }
 
-    // 4) Requête principale
-    let q = supabase
-      .from('therapist_locations')
-      .select(`
-        id,
-        therapist_id,
-        address,
-        city,
-        postal_code,
-        country,
-        modes,
-        lon,
-        lat,
-        therapists!inner (
+    // 4) Requête selon le mode
+    let results: ApiRow[] = []
+    
+    if (mode === 'cabinet') {
+      // Mode cabinet : recherche par localisation géographique
+      let q = supabase
+        .from('therapist_locations')
+        .select(`
           id,
-          slug,
-          full_name,
-          headline,
-          booking_url,
-          is_published
-        )
-      `)
-      .eq('country', 'BE')
-      .contains('modes', [mode])
+          therapist_id,
+          street,
+          house_number,
+          city,
+          postal_code,
+          country,
+          lon,
+          lat,
+          therapists!inner (
+            id,
+            slug,
+            first_name,
+            last_name,
+            booking_url,
+            is_published
+          )
+        `)
+        .eq('country', 'BE')
+        .eq('therapists.is_published', true)
+        .not('lon', 'is', null)
+        .not('lat', 'is', null)
 
-    if (therapistFilter && therapistFilter.length) {
-      q = q.in('therapist_id', therapistFilter)
-    }
+      if (therapistFilter && therapistFilter.length) {
+        q = q.in('therapist_id', therapistFilter)
+      }
 
-    const { data: locsData, error: locErr } = await q
-    if (locErr) throw locErr
+      const { data: locsData, error: locErr } = await q
+      if (locErr) throw locErr
 
-    // 4bis) Normaliser l’array vs objet pour `therapists`
-    const locsRaw = (locsData ?? []) as JoinedLocationRaw[]
-    const locs: JoinedLocation[] = locsRaw.map((r) => ({
-      ...r,
-      therapists: Array.isArray(r.therapists) ? (r.therapists[0] ?? null) : r.therapists,
-    }))
-
-    // 5) Projection
-    const results: ApiRow[] = locs
-      .filter((r) => Boolean(r.therapists?.is_published))
-      .map((r) => {
-        const t = r.therapists!
+      // Normaliser et calculer les distances si lat/lng fournis
+      const locs = (locsData ?? []) as any[]
+      results = locs.map((r) => {
+        const t = Array.isArray(r.therapists) ? r.therapists[0] : r.therapists
+        let distance_m: number | null = null
+        
+        if (lat && lng && r.lon && r.lat) {
+          // Calcul distance approximatif (formule haversine simplifiée)
+          const R = 6371000 // Rayon de la Terre en mètres
+          const dLat = (r.lat - lat) * Math.PI / 180
+          const dLng = (r.lon - lng) * Math.PI / 180
+          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat * Math.PI / 180) * Math.cos(r.lat * Math.PI / 180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2)
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+          distance_m = R * c
+        }
+        
+        // Construire l'adresse complète
+        const addressParts = [r.street, r.house_number].filter(Boolean)
+        const address = addressParts.length > 0 ? addressParts.join(' ') : null
+        
         return {
           therapist_id: r.therapist_id,
           slug: t.slug,
-          full_name: t.full_name,
-          headline: t.headline,
+          first_name: t.first_name,
+          last_name: t.last_name,
           booking_url: t.booking_url,
           location_id: r.id,
-          address: r.address,
+          address: address,
           city: r.city,
           postal_code: r.postal_code,
-          modes: r.modes ?? null,
+          distance_m,
           lon: typeof r.lon === 'number' ? r.lon : null,
           lat: typeof r.lat === 'number' ? r.lat : null,
           languages: null,
         }
       })
+      
+      // Filtrer par rayon si spécifié
+      if (radius_km && lat && lng) {
+        const radiusM = radius_km * 1000
+        results = results.filter(r => r.distance_m === null || r.distance_m <= radiusM)
+      }
+      
+      // Trier par distance
+      results.sort((a, b) => {
+        if (a.distance_m === null && b.distance_m === null) return 0
+        if (a.distance_m === null) return 1
+        if (b.distance_m === null) return -1
+        return a.distance_m - b.distance_m
+      })
+      
+    } else {
+      // Mode domicile : recherche par ville dans therapist_home_municipalities
+      if (!city) {
+        return NextResponse.json({ ok: true, results: [] })
+      }
+      
+      // Trouver les NIS codes correspondant à la ville
+      const { data: cityData, error: cityErr } = await supabase
+        .from('cities_be')
+        .select('nis_code')
+        .ilike('name_fr', `%${city}%`)
+        
+      if (cityErr) throw cityErr
+      
+      const nisCodes = (cityData ?? []).map(c => c.nis_code)
+      
+      if (nisCodes.length === 0) {
+        return NextResponse.json({ ok: true, results: [] })
+      }
+      
+      // Trouver les thérapeutes qui travaillent dans ces villes
+      let q = supabase
+        .from('therapist_home_municipalities')
+        .select(`
+          therapist_id,
+          nis_code,
+          therapists!inner (
+            id,
+            slug,
+            first_name,
+            last_name,
+            booking_url,
+            is_published
+          )
+        `)
+        .in('nis_code', nisCodes)
+        .eq('therapists.is_published', true)
+        
+      if (therapistFilter && therapistFilter.length) {
+        q = q.in('therapist_id', therapistFilter)
+      }
+      
+      const { data: homeData, error: homeErr } = await q
+      if (homeErr) throw homeErr
+      
+      // Grouper par thérapeute pour éviter les doublons
+      const therapistMap = new Map<string, any>()
+      
+      ;(homeData ?? []).forEach((r: any) => {
+        const t = Array.isArray(r.therapists) ? r.therapists[0] : r.therapists
+        if (!therapistMap.has(r.therapist_id)) {
+          therapistMap.set(r.therapist_id, {
+            therapist_id: r.therapist_id,
+            slug: t.slug,
+            first_name: t.first_name,
+            last_name: t.last_name,
+            booking_url: t.booking_url,
+            location_id: 0, // Pas de location_id pour le mode domicile
+            address: null,
+            city: city, // La ville recherchée
+            postal_code: null,
+            distance_m: null,
+            lon: null,
+            lat: null,
+            languages: null,
+          })
+        }
+      })
+      
+      results = Array.from(therapistMap.values())
+    }
+
 
     return NextResponse.json({ ok: true, results })
   } catch (e) {
