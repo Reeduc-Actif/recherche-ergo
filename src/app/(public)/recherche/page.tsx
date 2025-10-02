@@ -24,20 +24,19 @@ type Mode = 'cabinet' | 'domicile'
 type Result = {
   therapist_id: string
   slug: string
-  full_name: string
-  headline: string | null
+  first_name: string
+  last_name: string
   booking_url: string | null
-  location_id: number
-  address: string | null
-  city: string | null
-  postal_code: string | null
-  modes: string[] | null
-  distance_m: number | null
+  location_id?: number
+  address?: string | null
+  city?: string | null
+  postal_code?: string | null
+  distance_m?: number | null
   lon?: number | null
   lat?: number | null
   languages?: string[] | null
-  coverage_radius_km?: number | null
-  coverage_geojson?: import('geojson').Feature | import('geojson').FeatureCollection | null
+  // Pour les zones à domicile
+  home_cities?: string[] | null
 }
 
 type MapboxWithTelemetry = typeof mapboxgl & { setTelemetryEnabled?: (enabled: boolean) => void }
@@ -124,6 +123,7 @@ function SearchPageInner() {
   const [selectedLangs, setSelectedLangs] = useState<string[]>(urlLangs)
   const [selectedSpecs, setSelectedSpecs] = useState<string[]>(urlSpecs)
   const [mode, setMode] = useState<Mode>(urlMode === 'domicile' ? 'domicile' : 'cabinet')
+  const [selectedCity, setSelectedCity] = useState<string>(searchParams.get('city') || '')
 
   // Accordéons
   const [openCats, setOpenCats] = useState<Record<string, boolean>>({
@@ -136,40 +136,74 @@ function SearchPageInner() {
   // Helpers URL
   const updateUrl = useCallback(() => {
     const m = mapRef.current
-    if (!m) return
-    const c = m.getCenter()
     const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
     sp.set('mode', mode)
-    sp.set('lat', c.lat.toFixed(6))
-    sp.set('lng', c.lng.toFixed(6))
-    // on garde le param r=RADIUS_KM pour compat éventuelle
-    sp.set('r', String(RADIUS_KM))
+    
+    if (mode === 'cabinet' && m) {
+      const c = m.getCenter()
+      sp.set('lat', c.lat.toFixed(6))
+      sp.set('lng', c.lng.toFixed(6))
+      sp.set('r', String(RADIUS_KM))
+      sp.delete('city')
+    } else if (mode === 'domicile') {
+      if (selectedCity) sp.set('city', selectedCity)
+      else sp.delete('city')
+      sp.delete('lat')
+      sp.delete('lng')
+      sp.delete('r')
+    }
+    
     if (selectedSpecs.length) sp.set('spec', selectedSpecs.join(','))
     else sp.delete('spec')
     if (selectedLangs.length) sp.set('langs', selectedLangs.join(','))
     else sp.delete('langs')
     router.replace(`${pathname}?${sp.toString()}`)
-  }, [mode, pathname, router, selectedLangs, selectedSpecs])
+  }, [mode, pathname, router, selectedLangs, selectedSpecs, selectedCity])
 
-  // Fetch résultats (rayon constant plein pays)
+  // Fetch résultats (différent selon le mode)
   const fetchResults = useCallback(async () => {
     try {
-      const m = mapRef.current
-      if (!m) return
       setLoading(true)
-      const c = m.getCenter()
       const url = new URL('/api/search', window.location.origin)
       url.searchParams.set('mode', mode)
-      const res = await fetch(url.toString(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      
+      let body: {
+        specialties_filter?: string[]
+        languages_filter?: string[]
+        lat?: number
+        lng?: number
+        radius_km?: number
+        city?: string
+      } = {
+        specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
+        languages_filter: selectedLangs.length ? selectedLangs : undefined,
+      }
+      
+      if (mode === 'cabinet') {
+        const m = mapRef.current
+        if (!m) return
+        const c = m.getCenter()
+        body = {
+          ...body,
           lat: c.lat,
           lng: c.lng,
           radius_km: RADIUS_KM,
-          specialties_filter: selectedSpecs.length ? selectedSpecs : undefined,
-          languages_filter: selectedLangs.length ? selectedLangs : undefined,
-        }),
+        }
+      } else if (mode === 'domicile') {
+        if (!selectedCity) {
+          setResults([])
+          return
+        }
+        body = {
+          ...body,
+          city: selectedCity,
+        }
+      }
+      
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
       })
       const json = (await res.json()) as { ok?: boolean; results?: Result[] }
       setResults(json.ok && json.results ? json.results : [])
@@ -178,10 +212,11 @@ function SearchPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [mode, selectedLangs, selectedSpecs])
+  }, [mode, selectedLangs, selectedSpecs, selectedCity])
 
-  // Init carte — une seule fois
+  // Init carte — uniquement en mode cabinet
   useEffect(() => {
+    if (mode !== 'cabinet') return
     if (!mapDiv.current || mapRef.current) return
     if (!MAPBOX_TOKEN) {
       console.error('[Mapbox] NEXT_PUBLIC_MAPBOX_TOKEN manquant')
@@ -242,7 +277,7 @@ function SearchPageInner() {
       mapRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // init unique
+  }, [mode]) // init selon le mode
 
   // Relances quand filtres/langues/mode changent
   useEffect(() => {
@@ -266,8 +301,9 @@ function SearchPageInner() {
     results.forEach((r) => {
       if (r.lon != null && r.lat != null) {
         const lngLat: [number, number] = [r.lon, r.lat]
+        const displayName = r.first_name && r.last_name ? `${r.first_name} ${r.last_name}` : 'Ergothérapeute'
         const popupHtml = `
-          <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(r.full_name)}</div>
+          <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(displayName)}</div>
           <div style="font-size:12px;color:#555;margin-bottom:6px;">
             ${escapeHtml([r.address, r.postal_code, r.city].filter(Boolean).join(', '))}
           </div>
@@ -302,16 +338,27 @@ function SearchPageInner() {
   // Liste
   const items = useMemo(
     () =>
-      results.map((r) => ({
-        key: r.location_id,
-        title: r.full_name,
-        subtitle: r.headline ?? '',
-        address: [r.address, r.postal_code, r.city].filter(Boolean).join(', '),
-        booking: r.booking_url ?? undefined,
-        km: r.distance_m ? (r.distance_m / 1000).toFixed(1) : undefined,
-        slug: r.slug,
-      })),
-    [results],
+      results.map((r, index) => {
+        const displayName = r.first_name && r.last_name ? `${r.first_name} ${r.last_name}` : 'Ergothérapeute'
+        
+        let address = ''
+        if (mode === 'cabinet') {
+          address = [r.address, r.postal_code, r.city].filter(Boolean).join(', ')
+        } else if (mode === 'domicile' && r.home_cities) {
+          address = `Zones couvertes : ${r.home_cities.join(', ')}`
+        }
+        
+        return {
+          key: r.location_id || `therapist-${r.therapist_id}-${index}`,
+          title: displayName,
+          subtitle: 'Ergothérapeute',
+          address: address,
+          booking: r.booking_url ?? undefined,
+          km: r.distance_m ? (r.distance_m / 1000).toFixed(1) : undefined,
+          slug: r.slug,
+        }
+      }),
+    [results, mode],
   )
 
   return (
@@ -337,6 +384,23 @@ function SearchPageInner() {
               À domicile
             </button>
           </div>
+
+          {/* Champ ville pour mode domicile */}
+          {mode === 'domicile' && (
+            <div className="mt-3">
+              <label className="block text-xs text-neutral-500 mb-1">Ville</label>
+              <input
+                type="text"
+                value={selectedCity}
+                onChange={(e) => setSelectedCity(e.target.value)}
+                placeholder="Entrez le nom de votre ville..."
+                className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
+              />
+              <div className="text-xs text-neutral-400 mt-1">
+                Recherchez les ergothérapeutes qui se déplacent dans votre ville
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Filtres */}
@@ -445,9 +509,34 @@ function SearchPageInner() {
         </ul>
       </section>
 
-      <section className="rounded-xl border">
-        <div ref={mapDiv} className="h-[560px] min-h-[560px] w-full rounded-xl" />
-      </section>
+      {/* Carte uniquement en mode cabinet */}
+      {mode === 'cabinet' && (
+        <section className="rounded-xl border">
+          <div ref={mapDiv} className="h-[560px] min-h-[560px] w-full rounded-xl" />
+        </section>
+      )}
+
+      {/* Message informatif en mode domicile */}
+      {mode === 'domicile' && (
+        <section className="rounded-xl border p-6 bg-blue-50">
+          <div className="text-center">
+            <h3 className="text-lg font-medium text-blue-900 mb-2">Mode à domicile</h3>
+            <p className="text-blue-700 mb-4">
+              Recherchez les ergothérapeutes qui se déplacent dans votre ville.
+            </p>
+            {!selectedCity && (
+              <p className="text-blue-600 text-sm">
+                Entrez le nom de votre ville dans le champ ci-dessus pour voir les résultats.
+              </p>
+            )}
+            {selectedCity && results.length === 0 && !loading && (
+              <p className="text-blue-600 text-sm">
+                Aucun ergothérapeute ne se déplace dans "{selectedCity}" pour le moment.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
     </main>
   )
 }
