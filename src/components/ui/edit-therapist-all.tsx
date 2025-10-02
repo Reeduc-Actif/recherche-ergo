@@ -99,6 +99,7 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
   const [languages, setLanguages] = useState<string[]>([])
   const [specialties, setSpecialties] = useState<string[]>([])
+  const [cityNames, setCityNames] = useState<Record<number, string>>({}) // NIS code -> city name
 
   // --- référentiel spécialités ---
   const [specs, setSpecs] = useState<{ slug: string; label: string; parent_slug: string | null }[]>([])
@@ -168,14 +169,17 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
 
       // Ajouter les cabinets
       for (const cabinet of (cabinets ?? []) as CabinetRow[]) {
-        // Construire l'adresse complète
-        const addressParts = [cabinet.street, cabinet.house_number].filter(Boolean)
-        const address = addressParts.join(' ')
+        // Construire l'adresse complète avec rue, numéro, code postal et ville
+        const streetParts = [cabinet.street, cabinet.house_number].filter(Boolean)
+        const streetAddress = streetParts.join(' ')
+        const cityParts = [cabinet.postal_code, cabinet.city].filter(Boolean)
+        const cityAddress = cityParts.join(' ')
+        const fullAddress = [streetAddress, cityAddress].filter(Boolean).join(', ')
 
         drafts.push({
           id: cabinet.id,
           mode: 'cabinet',
-          address: address,
+          address: fullAddress,
           street: cabinet.street ?? '',
           house_number: cabinet.house_number ?? '',
           postal_code: cabinet.postal_code ?? '',
@@ -191,6 +195,24 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
       // Ajouter la zone à domicile (s'il y en a une)
       if (homeCities && homeCities.length > 0) {
         const nisList = (homeCities as HomeMunicipalityRow[]).map(r => r.nis_code)
+        
+        // Récupérer les noms des villes à partir des codes NIS
+        if (nisList.length > 0) {
+          const { data: cities } = await sb
+            .from('cities_be')
+            .select('nis_code, name_fr')
+            .in('nis_code', nisList)
+          
+          // Créer un mapping NIS -> nom de ville
+          const cityMapping: Record<number, string> = {}
+          if (cities) {
+            cities.forEach((city: any) => {
+              cityMapping[city.nis_code] = city.name_fr
+            })
+          }
+          setCityNames(cityMapping)
+        }
+        
         drafts.push({
           mode: 'domicile',
           country: 'BE',
@@ -471,6 +493,37 @@ export default function EditTherapistAll({ therapist }: { therapist: Therapist }
               ) : (
                 <div>
                   <div className="mb-1 text-sm text-neutral-600">Villes couvertes</div>
+                  
+                  {/* Affichage des villes actuellement sélectionnées */}
+                  {(loc as DomicileDraft).cities && (loc as DomicileDraft).cities.length > 0 && (
+                    <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-sm font-medium text-blue-800 mb-2">
+                        Villes actuellement sélectionnées :
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {(loc as DomicileDraft).cities.map((nisCode) => (
+                          <span 
+                            key={nisCode} 
+                            className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full"
+                          >
+                            {cityNames[Number(nisCode)] || `NIS: ${nisCode}`}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const currentCities = (loc as DomicileDraft).cities
+                                const newCities = currentCities.filter(c => c !== nisCode)
+                                updateLoc(idx, ({ cities: newCities } as Partial<DomicileDraft>))
+                              }}
+                              className="ml-1 text-blue-600 hover:text-blue-800"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
                   <CityAutocompleteMulti
                     value={(loc as DomicileDraft).cities ?? []}
                     onChange={(codes) => updateLoc(idx, ({ cities: codes } as Partial<DomicileDraft>))}
