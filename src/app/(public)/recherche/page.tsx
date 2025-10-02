@@ -531,7 +531,7 @@ function SearchPageInner() {
             )}
             {selectedCity && results.length === 0 && !loading && (
               <p className="text-blue-600 text-sm">
-                Aucun ergothérapeute ne se déplace dans "{selectedCity}" pour le moment.
+                Aucun ergothérapeute ne se déplace dans &ldquo;{selectedCity}&rdquo; pour le moment.
               </p>
             )}
           </div>
