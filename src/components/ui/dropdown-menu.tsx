@@ -55,7 +55,10 @@ const DropdownMenuTrigger = React.forwardRef<
 
   if (asChild) {
     return React.cloneElement(children as React.ReactElement, {
-      onClick: () => setOpen(!open),
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault()
+        setOpen(!open)
+      },
       ref
     } as any)
   }
@@ -82,7 +85,7 @@ const DropdownMenuContent = React.forwardRef<
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element
-      if (!target.closest('.dropdown-menu')) {
+      if (!target.closest('.dropdown-menu-container')) {
         setOpen(false)
       }
     }
@@ -102,7 +105,7 @@ const DropdownMenuContent = React.forwardRef<
     <div
       ref={ref}
       className={cn(
-        "dropdown-menu absolute z-50 min-w-[8rem] overflow-hidden rounded-md border bg-white p-1 text-neutral-900 shadow-md",
+        "dropdown-menu-container absolute z-50 min-w-[8rem] overflow-hidden rounded-md border bg-white p-1 text-neutral-900 shadow-md",
         align === "start" && "left-0",
         align === "center" && "left-1/2 -translate-x-1/2",
         align === "end" && "right-0",
@@ -129,7 +132,16 @@ const DropdownMenuItem = React.forwardRef<
 
   if (asChild) {
     return React.cloneElement(children as React.ReactElement, {
-      onClick: handleClick,
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault()
+        handleClick()
+        // Si c'est un Link, on laisse le navigateur gérer la navigation
+        if (children && typeof children === 'object' && 'props' in children && (children.props as any).href) {
+          setTimeout(() => {
+            window.location.href = (children.props as any).href
+          }, 100)
+        }
+      },
       ref
     } as any)
   }
