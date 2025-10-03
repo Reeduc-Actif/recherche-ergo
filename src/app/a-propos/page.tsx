@@ -1,4 +1,4 @@
-import { Card, CardContent } from '@/components/ui/card'
+// import { Card, CardContent } from '@/components/ui/card'
 import AvatarCard from '@/components/ui/avatar-card'
 import Section from '@/components/ui/section'
 import { Users, Target, Heart, Award } from 'lucide-react'
@@ -7,13 +7,13 @@ const TEAM_MEMBERS = [
   {
     name: 'Marie Dubois',
     role: 'Fondatrice & CEO',
-    bio: 'Ergothérapeute avec 15 ans d\'expérience, passionnée par l\'innovation dans le domaine de la santé.',
+    bio: 'Ergothérapeute avec 15 ans d&apos;expérience, passionnée par l&apos;innovation dans le domaine de la santé.',
     image: '/team/marie-dubois.jpg'
   },
   {
     name: 'Jean Martin',
     role: 'CTO',
-    bio: 'Développeur full-stack spécialisé dans les solutions de santé digitale et l\'expérience utilisateur.',
+    bio: 'Développeur full-stack spécialisé dans les solutions de santé digitale et l&apos;expérience utilisateur.',
     image: '/team/jean-martin.jpg'
   },
   {
@@ -80,9 +80,9 @@ export default function AboutPage() {
                   <Users className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-2">Faciliter l'accès à l'ergothérapie</h3>
+                  <h3 className="font-semibold mb-2">Faciliter l&apos;accès à l&apos;ergothérapie</h3>
                   <p className="text-neutral-600">
-                    Nous rendons la recherche d'un ergothérapeute simple et intuitive, 
+                    Nous rendons la recherche d&apos;un ergothérapeute simple et intuitive, 
                     avec des filtres précis et une carte interactive pour trouver le professionnel le plus proche.
                   </p>
                 </div>
@@ -108,7 +108,7 @@ export default function AboutPage() {
                 <div>
                   <h3 className="font-semibold mb-2">Outiller les professionnels</h3>
                   <p className="text-neutral-600">
-                    Certification, génération de rapports, outils d'aménagement du domicile : 
+                    Certification, génération de rapports, outils d&apos;aménagement du domicile : 
                     nous fournissons aux ergothérapeutes tous les outils nécessaires à leur pratique.
                   </p>
                 </div>
@@ -119,7 +119,7 @@ export default function AboutPage() {
                   <Heart className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-2">Parcours simple & centralisé</h3>
+                  <h3 className="font-semibold mb-2">Parcours simple &amp; centralisé</h3>
                   <p className="text-neutral-600">
                     Patients, ergothérapeutes, entrepreneurs : tous les acteurs peuvent collaborer 
                     efficacement sur une même plateforme, du diagnostic à la réalisation des aménagements.
@@ -134,10 +134,10 @@ export default function AboutPage() {
               <h3 className="text-xl font-semibold mb-6 text-center">Notre mission</h3>
               <div className="space-y-4 text-center">
                 <p className="text-neutral-700">
-                  "Rendre l'ergothérapie accessible à tous en Belgique, 
+                  &quot;Rendre l&apos;ergothérapie accessible à tous en Belgique, 
                   en créant un écosystème numérique qui facilite la rencontre 
-                  entre patients et professionnels, tout en soutenant l'excellence 
-                  de la pratique ergothérapeutique."
+                  entre patients et professionnels, tout en soutenant l&apos;excellence 
+                  de la pratique ergothérapeutique.&quot;
                 </p>
                 <div className="pt-4 border-t">
                   <p className="text-sm text-neutral-600">

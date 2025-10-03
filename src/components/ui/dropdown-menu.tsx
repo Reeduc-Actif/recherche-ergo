@@ -57,7 +57,7 @@ const DropdownMenuTrigger = React.forwardRef<
     return React.cloneElement(children as React.ReactElement, {
       onClick: () => setOpen(!open),
       ref
-    })
+    } as any)
   }
 
   return (
@@ -131,7 +131,7 @@ const DropdownMenuItem = React.forwardRef<
     return React.cloneElement(children as React.ReactElement, {
       onClick: handleClick,
       ref
-    })
+    } as any)
   }
 
   return (

@@ -7,7 +7,6 @@ import Section from "@/components/ui/section"
 import MockMap from "@/components/ui/mock-map"
 import {
   Calendar,
-  MapPin,
   Search,
   ShieldCheck,
   Users,
@@ -68,7 +67,7 @@ export default function Home() {
             <h2 className="text-2xl font-semibold">ErgoConnect Pro — Aménagement du domicile</h2>
             <p className="text-neutral-700">
               Un espace dédié aux professionnels : gestion de profils, validation des diplômes,
-              et prochainement des outils pour <strong>l'aménagement du domicile</strong> des personnes à mobilité réduite.
+              et prochainement des outils pour <strong>l&apos;aménagement du domicile</strong> des personnes à mobilité réduite.
             </p>
             <div className="flex flex-wrap gap-3">
               <Link href="/suivi/ergotherapeute">
@@ -80,7 +79,7 @@ export default function Home() {
               <Link href="/amenagement">
                 <Button variant="outline">
                   <HomeIcon className="mr-2 h-4 w-4" />
-                  Découvrir l'aménagement
+                  Découvrir l&apos;aménagement
                 </Button>
               </Link>
             </div>
