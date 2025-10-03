@@ -124,6 +124,24 @@
       radial-gradient(800px 500px at 110% 10%, rgba(0, 0, 0, 0.04), transparent 60%),
       linear-gradient(180deg, white, white);
   }
+
+  /* Animation du carrousel de logos */
+  @keyframes marquee {
+    0% {
+      transform: translateX(0%);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+
+  .animate-marquee {
+    animation: marquee 30s linear infinite;
+  }
+
+  .animation-paused {
+    animation-play-state: paused;
+  }
 }
 
 
