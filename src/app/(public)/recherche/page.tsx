@@ -47,7 +47,7 @@ const SPECIALTIES = [
     slug: 'pediatrie',
     label: 'Pédiatrie',
     children: [
-      { slug: 'troubles-ecriture', label: "Troubles de l’écriture" },
+      { slug: 'troubles-ecriture', label: 'Troubles de l\'écriture' },
       { slug: 'troubles-calculs', label: 'Troubles des calculs' },
       { slug: 'apprentissage-outils-numeriques', label: 'Apprentissage outils numériques' },
       { slug: 'troubles-autistiques', label: 'Troubles autistiques' },
@@ -61,7 +61,7 @@ const SPECIALTIES = [
       { slug: 'reeducation-adulte', label: 'Rééducation' },
       { slug: 'conseils-amenagement-domicile-adulte', label: 'Conseils en aménagement du domicile' },
       { slug: 'conseils-aide-mobilite-adulte', label: 'Conseils aide à la mobilité' },
-      { slug: 'apprentissage-aides-techniques-adulte', label: 'Apprentissage à l’utilisation des aides techniques' },
+      { slug: 'apprentissage-aides-techniques-adulte', label: 'Apprentissage à l\'utilisation des aides techniques' },
       { slug: 'apprentissage-transferts-adulte', label: 'Apprentissage aux transferts' },
     ],
   },
@@ -72,7 +72,7 @@ const SPECIALTIES = [
       { slug: 'reeducation-geriatrie', label: 'Rééducation' },
       { slug: 'conseils-amenagement-domicile-geriatrie', label: 'Conseils en aménagement du domicile' },
       { slug: 'conseils-aide-mobilite-geriatrie', label: 'Conseils aide à la mobilité' },
-      { slug: 'apprentissage-aides-techniques-geriatrie', label: 'Apprentissage à l’utilisation des aides techniques' },
+      { slug: 'apprentissage-aides-techniques-geriatrie', label: 'Apprentissage à l\'utilisation des aides techniques' },
       { slug: 'apprentissage-transferts-geriatrie', label: 'Apprentissage aux transferts' },
       { slug: 'accompagnement-demence', label: 'Accompagnement démence' },
     ],
@@ -108,7 +108,7 @@ function SearchPageInner() {
   const urlLng = Number(searchParams.get('lng'))
   const urlMode = (searchParams.get('mode') as Mode) || 'cabinet'
 
-  // Filtres depuis l’URL
+  // Filtres depuis l'URL
   const urlSpecs = (searchParams.get('spec') || '')
     .split(',')
     .map((s) => s.trim())
