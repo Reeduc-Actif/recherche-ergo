@@ -275,7 +275,7 @@ function SearchPageInner() {
           </div>
           <div style="display:flex;gap:6px;">
             ${r.booking_url ? `<a href="${escapeAttr(r.booking_url)}" target="_blank" rel="noreferrer" style="font-size:12px;text-decoration:underline;">Prendre RDV</a>` : ''}
-            <a href="/ergo/${escapeAttr(r.slug)}" style="font-size:12px;text-decoration:underline;">Voir le profil</a>
+            <a href="/ergotherapeutes/${escapeAttr(r.slug)}" style="font-size:12px;text-decoration:underline;">Voir le profil</a>
           </div>
         `
         const mk = new mapboxgl.Marker()
@@ -461,7 +461,7 @@ function SearchPageInner() {
                   {it.km && <div className="mt-1 text-xs text-neutral-500">{it.km} km</div>}
                 </div>
                 <div className="flex flex-col gap-2">
-                  <a className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" href={`/ergo/${it.slug}`}>
+                  <a className="rounded-lg border px-3 py-1 text-sm hover:bg-neutral-50" href={`/ergotherapeutes/${it.slug}`}>
                     Voir le profil
                   </a>
                 </div>

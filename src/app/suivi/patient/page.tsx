@@ -9,6 +9,7 @@ import FormField from '@/components/ui/form-field'
 import UploadField from '@/components/ui/upload-field'
 import InfoBadge from '@/components/ui/info-badge'
 import { Calendar, FileText, Users, ShieldCheck } from 'lucide-react'
+import Link from 'next/link'
 
 export default function PatientPage() {
   const [formData, setFormData] = useState({
@@ -124,9 +125,11 @@ export default function PatientPage() {
               </Button>
               
               <div className="text-center">
-                <Button variant="outline" className="w-full">
-                  Commencer une recherche
-                </Button>
+                <Link href="/recherche">
+                  <Button variant="outline" className="w-full">
+                    Commencer une recherche
+                  </Button>
+                </Link>
               </div>
             </div>
           </CardContent>
