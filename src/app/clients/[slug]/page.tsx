@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { MapPin, Phone, Mail, Calendar, FileText, User, ShieldCheck } from 'lucide-react'
+import { MapPin, Phone, Mail, FileText, User, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
 
 // Données mock pour la démo
@@ -30,10 +30,11 @@ const MOCK_CLIENT = {
 }
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
-export default function ClientProfilePage({ params }: Props) {
+export default async function ClientProfilePage({ params }: Props) {
+  const { slug } = await params
   const client = MOCK_CLIENT // En production, récupérer depuis l'API
 
   return (

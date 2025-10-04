@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 const LOGOS = [
   { name: 'Partenaire 1', src: '/placeholder-logo-1.svg' },

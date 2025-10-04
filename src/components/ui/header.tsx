@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { usePathname } from 'next/navigation'
 import { Menu, X, ChevronDown } from 'lucide-react'
 import {
   DropdownMenu,
@@ -13,7 +12,6 @@ import {
 
 export default function Header() {
   const [open, setOpen] = useState(false)
-  const pathname = usePathname()
 
   // Fermer le menu quand on change de page
   const closeMenu = () => setOpen(false)

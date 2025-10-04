@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { MapPin, Phone, Mail, Calendar, ShieldCheck, Globe, Home, Video } from 'lucide-react'
+import { MapPin, Phone, Mail, Calendar, ShieldCheck, Home, Video } from 'lucide-react'
 import Link from 'next/link'
 
 // Données mock pour la démo
@@ -24,10 +24,11 @@ const MOCK_ERGO = {
 }
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
-export default function ErgotherapeuteProfilePage({ params }: Props) {
+export default async function ErgotherapeuteProfilePage({ params }: Props) {
+  const { slug } = await params
   const ergo = MOCK_ERGO // En production, récupérer depuis l'API
 
   return (

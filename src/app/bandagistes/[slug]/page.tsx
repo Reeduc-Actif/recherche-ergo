@@ -23,10 +23,11 @@ const MOCK_BANDAGISTE = {
 }
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
-export default function BandagisteProfilePage({ params }: Props) {
+export default async function BandagisteProfilePage({ params }: Props) {
+  const { slug } = await params
   const bandagiste = MOCK_BANDAGISTE // En production, récupérer depuis l'API
 
   return (

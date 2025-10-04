@@ -3,14 +3,13 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import RoleLayout from '@/components/ui/role-layout'
 import PlanCard from '@/components/ui/plan-card'
 import FormField from '@/components/ui/form-field'
 import StepWizard from '@/components/ui/step-wizard'
 import InfoBadge from '@/components/ui/info-badge'
 import { Badge } from '@/components/ui/badge'
-import { ShieldCheck, FileText, Users, Mail, User, Settings } from 'lucide-react'
+import { ShieldCheck, FileText, Users, Mail } from 'lucide-react'
 
 export default function BandagistePage() {
   const [currentStep, setCurrentStep] = useState(0)

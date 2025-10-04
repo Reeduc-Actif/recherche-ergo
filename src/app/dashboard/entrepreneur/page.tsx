@@ -18,7 +18,6 @@ import {
   Save,
   X,
   Clock,
-  Users,
   Home
 } from 'lucide-react'
 

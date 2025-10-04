@@ -26,18 +26,18 @@ type JoinedTherapist = {
   is_published: boolean | null
 }
 
-type JoinedLocation = {
-  id: number
-  therapist_id: string
-  address: string | null
-  city: string | null
-  postal_code: string | null
-  country: string | null
-  modes: string[] | null
-  lon: number | null
-  lat: number | null
-  therapists: JoinedTherapist | null
-}
+// type JoinedLocation = {
+//   id: number
+//   therapist_id: string
+//   address: string | null
+//   city: string | null
+//   postal_code: string | null
+//   country: string | null
+//   modes: string[] | null
+//   lon: number | null
+//   lat: number | null
+//   therapists: JoinedTherapist | null
+// }
 
 
 type ApiRow = {

@@ -10,7 +10,7 @@ import FormField from '@/components/ui/form-field'
 import StepWizard from '@/components/ui/step-wizard'
 import InfoBadge from '@/components/ui/info-badge'
 import { Badge } from '@/components/ui/badge'
-import { FileText, Clock, Target, Users, Mail, User, Settings } from 'lucide-react'
+import { FileText, Clock, Target, Mail } from 'lucide-react'
 
 export default function EntrepreneurPage() {
   const [currentStep, setCurrentStep] = useState(0)

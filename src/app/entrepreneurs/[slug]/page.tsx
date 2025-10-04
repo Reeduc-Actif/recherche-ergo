@@ -23,10 +23,11 @@ const MOCK_ENTREPRENEUR = {
 }
 
 interface Props {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
-export default function EntrepreneurProfilePage({ params }: Props) {
+export default async function EntrepreneurProfilePage({ params }: Props) {
+  const { slug } = await params
   const entrepreneur = MOCK_ENTREPRENEUR // En production, récupérer depuis l'API
 
   return (
